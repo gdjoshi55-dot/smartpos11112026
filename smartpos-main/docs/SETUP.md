@@ -24,6 +24,8 @@ Copy or edit `.env` (the repo ships with an `.env` file; keep real values out of
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID`     | Yes      | Razorpay key ID (public, used by Checkout.js)                                 |
 | `RAZORPAY_KEY_SECRET`             | Yes      | Razorpay key secret — **server-side only** (`/api/create-order`, `/api/subscription/*`) |
 | `RAZORPAY_WEBHOOK_SECRET`         | Optional | Secret for `/api/webhooks/razorpay` signature verification                    |
+| `GOOGLE_MAPS_API_KEY`             | Yes*     | Server-side Google key with **Routes API** + **Geocoding API** enabled. Used by `/api/geo/distance` to compute restaurant→customer km for rider pay and to detect rush-hour traffic (traffic duration vs free-flow duration) for the rush surge. Without it, distance is skipped and payout falls back to base pay. |
+| `CUSTOMER_SESSION_SECRET`         | Optional | Secret used to sign customer login cookies. Falls back to `SUPABASE_SERVICE_ROLE_KEY`; set a dedicated random value in production. |
 | `NEXT_PUBLIC_BASE_URL`            | Optional | Public base URL (e.g. `http://localhost:3003`)                                |
 | `ALTASOFTWARE_OWNER_LOGIN`        | Yes*    | Owner email — server-side check for `/api/admin/*` (`assertOwner`)            |
 | `NEXT_PUBLIC_ALTASOFTWARE_OWNER_LOGIN` | Yes* | Owner email (client-visible) — drives owner UI (admin links, no subscription lock) |
@@ -60,6 +62,21 @@ This creates:
 - Seed plans (1 Month ₹299 / 3 Months ₹799 / 6 Months ₹1499 / 12 Months ₹2499) — adjust or manage via the owner Plan Value Change screen.
 
 Then copy the project URL and anon key from **Project Settings → API** into your environment.
+
+## Rider Payout Formula
+
+Migrations `0029`, `0031`, and `0032` add distance-based rider pay. Configure values under **Admin → Riders → Platform rider pay**:
+
+| Component | Default |
+| --- | --- |
+| Base pay | ₹30 per delivery |
+| Distance pay | ₹15/km beyond the free radius (3.5 km) |
+| Long-trip bonus | ₹25 for trips over 10 km |
+| Rush surge | 30% on base + distance + long-trip pay during Google-detected rush |
+| Incentive | ₹350 weekday / ₹400 weekend every 10 completed orders per IST day |
+| Customer tip | 100% to the rider |
+
+The restaurant must have a saved map location (Dashboard → Settings) or distance and distance-based payout stay at zero. Payouts are calculated automatically when the rider marks the delivery delivered.
 
 ## 4. Run Locally
 

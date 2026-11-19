@@ -21,6 +21,9 @@ import {
   Store,
   Truck,
   User,
+  Volume2,
+  VolumeX,
+  Wallet,
   XCircle,
 } from "lucide-react";
 
@@ -79,9 +82,97 @@ export default function RiderMode({ onBack }: RiderModeProps) {
   const [tab, setTab] = useState<RiderTab>("active");
   const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
   const [togglingStatus, setTogglingStatus] = useState(false);
+  const [earnings, setEarnings] = useState({ today: 0, total: 0 });
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const [now, setNow] = useState(Date.now());
   const lastLocationSent = useRef<number>(0);
   const permissionWarned = useRef(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const previousAssignedIdsRef = useRef<Set<number> | null>(null);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("rider_sound_enabled");
+      if (stored != null) setSoundEnabled(stored === "true");
+    } catch {
+      // ignore storage errors (private mode, etc.)
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "rider_sound_enabled",
+        String(soundEnabled)
+      );
+    } catch {
+      // ignore
+    }
+  }, [soundEnabled]);
+
+  const ensureAudioContext = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Ctx) return null;
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new Ctx();
+    }
+    const ctx = audioCtxRef.current;
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+    return ctx;
+  }, []);
+
+  const playAssignmentChime = useCallback((force = false) => {
+    if (!soundEnabled && !force) return;
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+    try {
+      // Two rising three-note chimes, loud enough to hear from a phone mount.
+      const notes = [880, 1108.73, 1318.51];
+      const startAt = ctx.currentTime + 0.05;
+      [0, 0.75].forEach((offset) => {
+        notes.forEach((freq, index) => {
+          const start = startAt + offset + index * 0.16;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(freq, start);
+          gain.gain.setValueAtTime(0.0001, start);
+          gain.gain.exponentialRampToValueAtTime(0.35, start + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.35);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(start);
+          osc.stop(start + 0.37);
+        });
+      });
+    } catch (err) {
+      console.error("Could not play assignment sound:", err);
+    }
+  }, [ensureAudioContext, soundEnabled]);
+
+  // Browsers block audio until a user gesture occurs; unlock on first tap/keypress.
+  useEffect(() => {
+    const prime = () => {
+      ensureAudioContext();
+      window.removeEventListener("pointerdown", prime);
+      window.removeEventListener("keydown", prime);
+      window.removeEventListener("touchstart", prime);
+    };
+    window.addEventListener("pointerdown", prime);
+    window.addEventListener("keydown", prime);
+    window.addEventListener("touchstart", prime);
+    return () => {
+      window.removeEventListener("pointerdown", prime);
+      window.removeEventListener("keydown", prime);
+      window.removeEventListener("touchstart", prime);
+    };
+  }, [ensureAudioContext]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30000);
@@ -143,10 +234,50 @@ export default function RiderMode({ onBack }: RiderModeProps) {
         ((assignmentRows || []) as Assignment[]).forEach((a) => {
           map[a.order_id] = a;
         });
+
+        const activeIds = new Set<number>();
+        Object.values(map).forEach((a) => {
+          if (ACTIVE_STATUSES.includes(a.status as AssignmentStatus)) {
+            activeIds.add(a.order_id);
+          }
+        });
+        const previousIds = previousAssignedIdsRef.current;
+        if (
+          previousIds &&
+          Array.from(activeIds).some((id) => !previousIds.has(id))
+        ) {
+          playAssignmentChime();
+          toast.success("New delivery assigned to you!", {
+            duration: 6000,
+            icon: "🔔",
+          });
+        }
+        previousAssignedIdsRef.current = activeIds;
+
         setAssignments(map);
       } else {
         setAssignments({});
+        previousAssignedIdsRef.current = new Set();
       }
+
+      const { data: payoutRows } = await supabase
+        .from("delivery_assignments")
+        .select("payout_amount, delivered_at")
+        .eq("rider_id", user.id)
+        .eq("status", "delivered");
+      const todayKey = new Date().toDateString();
+      let todayTotal = 0;
+      let allTimeTotal = 0;
+      ((payoutRows || []) as { payout_amount: number | null; delivered_at: string | null }[]).forEach(
+        (row) => {
+          const amount = Number(row.payout_amount || 0);
+          allTimeTotal += amount;
+          if (row.delivered_at && new Date(row.delivered_at).toDateString() === todayKey) {
+            todayTotal += amount;
+          }
+        }
+      );
+      setEarnings({ today: todayTotal, total: allTimeTotal });
 
       const { data: riderRow } = await supabase
         .from("users")
@@ -162,7 +293,7 @@ export default function RiderMode({ onBack }: RiderModeProps) {
     } finally {
       setLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, playAssignmentChime]);
 
   useEffect(() => {
     fetchDeliveries();
@@ -483,13 +614,41 @@ export default function RiderMode({ onBack }: RiderModeProps) {
                 : "You will automatically go offline while delivering."}
             </p>
           </div>
-          <div className="text-right">
-            <p className="text-sm text-gray-500">Platform</p>
-            <p className="font-medium text-gray-900">SmartPOS Rider</p>
+          <div className="flex flex-col items-end gap-2">
+            <div className="text-right">
+              <p className="text-sm text-gray-500">Platform</p>
+              <p className="font-medium text-gray-900">SmartPOS Rider</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const next = !soundEnabled;
+                setSoundEnabled(next);
+                if (next) playAssignmentChime(true);
+              }}
+              title={
+                soundEnabled
+                  ? "Mute new-delivery sound"
+                  : "Unmute new-delivery sound"
+              }
+              aria-pressed={soundEnabled}
+              className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors ${
+                soundEnabled
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                  : "border-gray-300 bg-gray-50 text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              {soundEnabled ? (
+                <Volume2 className="h-4 w-4" />
+              ) : (
+                <VolumeX className="h-4 w-4" />
+              )}
+              {soundEnabled ? "Sound on" : "Muted"}
+            </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-2 gap-4 mb-6 lg:grid-cols-4">
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center">
             <Truck className="h-7 w-7 text-yellow-600 mr-3" />
             <div>
@@ -502,6 +661,24 @@ export default function RiderMode({ onBack }: RiderModeProps) {
             <div>
               <p className="text-sm font-medium text-green-700">Completed</p>
               <p className="text-2xl font-bold text-green-800">{completedOrders.length}</p>
+            </div>
+          </div>
+          <div className="bg-sky-50 border border-sky-200 rounded-lg p-4 flex items-center">
+            <Wallet className="h-7 w-7 text-sky-600 mr-3" />
+            <div>
+              <p className="text-sm font-medium text-sky-700">Today&apos;s earnings</p>
+              <p className="text-2xl font-bold text-sky-800">
+                {formatCurrency(earnings.today, currency)}
+              </p>
+            </div>
+          </div>
+          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 flex items-center">
+            <Wallet className="h-7 w-7 text-emerald-600 mr-3" />
+            <div>
+              <p className="text-sm font-medium text-emerald-700">Total earnings</p>
+              <p className="text-2xl font-bold text-emerald-800">
+                {formatCurrency(earnings.total, currency)}
+              </p>
             </div>
           </div>
         </div>
@@ -548,6 +725,42 @@ export default function RiderMode({ onBack }: RiderModeProps) {
               const isUpdating = updatingOrderId === order.id;
               const orderCurrency =
                 restaurantCurrencies[order.restaurant_id] || currency;
+              const payout = assignments[order.id];
+              const payoutAmount = Number(payout?.payout_amount || 0);
+              const distanceKm =
+                payout?.distance_km != null
+                  ? Number(payout.distance_km)
+                  : (order as any).delivery_distance_km;
+              const payoutBreakdown = [
+                {
+                  label: "Base pay",
+                  amount: Number(payout?.base_pay_amount || 0),
+                },
+                {
+                  label: `Distance pay${
+                    payout?.billable_km != null
+                      ? ` (${Number(payout.billable_km).toFixed(2)} km)`
+                      : ""
+                  }`,
+                  amount: Number(payout?.distance_pay_amount || 0),
+                },
+                {
+                  label: "Long-trip bonus",
+                  amount: Number(payout?.long_trip_bonus_amount || 0),
+                },
+                {
+                  label: "Rush surge",
+                  amount: Number(payout?.surge_pay_amount || 0),
+                },
+                {
+                  label: "Incentive",
+                  amount: Number(payout?.incentive_amount || 0),
+                },
+                {
+                  label: "Customer tip",
+                  amount: Number(payout?.tip_amount || 0),
+                },
+              ].filter((item) => item.amount > 0);
               return (
                 <div
                   key={order.id}
@@ -650,6 +863,45 @@ export default function RiderMode({ onBack }: RiderModeProps) {
                         {formatCurrency(order.total, orderCurrency)}
                       </span>
                     </div>
+
+                    {status === "delivered" && (
+                      <>
+                        <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs">
+                          <span className="text-emerald-700">
+                            {distanceKm != null
+                              ? `${Number(distanceKm).toFixed(2)} km`
+                              : "Distance n/a"}
+                          </span>
+                          <span className="font-semibold text-emerald-800">
+                            Earned {formatCurrency(payoutAmount, orderCurrency)}
+                          </span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 font-medium ${
+                              payout?.payout_status === "paid"
+                                ? "bg-emerald-200 text-emerald-900"
+                                : "bg-amber-200 text-amber-900"
+                            }`}
+                          >
+                            {payout?.payout_status === "paid" ? "Paid" : "Pending"}
+                          </span>
+                        </div>
+                        {payoutBreakdown.length > 0 && (
+                          <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-[11px] text-gray-600">
+                            {payoutBreakdown.map((item) => (
+                              <div
+                                key={item.label}
+                                className="flex justify-between"
+                              >
+                                <span>{item.label}</span>
+                                <span className="font-medium text-gray-800">
+                                  {formatCurrency(item.amount, orderCurrency)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
 
                     {tab === "active" && (
                       <div className="mt-4 flex items-center gap-2 flex-wrap">

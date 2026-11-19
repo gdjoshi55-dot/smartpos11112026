@@ -18,6 +18,9 @@ interface PublicRestaurant {
   address_line3?: string | null;
   phone?: string | null;
   delivery_mode?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  accepting_orders?: boolean | null;
 }
 
 export default function PublicOrderPage() {
@@ -31,7 +34,7 @@ export default function PublicOrderPage() {
 
   useEffect(() => {
     if (!rawCode) {
-      router.replace('/order');
+      router.replace('/restaurants');
       return;
     }
     let cancelled = false;
@@ -40,7 +43,7 @@ export default function PublicOrderPage() {
       setNotFound(false);
       const { data, error } = await supabase
         .from('parameters')
-        .select('restaurant_id, restaurant_name, currency, item_options, address_line1, address_line2, address_line3, phone, delivery_mode')
+        .select('restaurant_id, restaurant_name, currency, item_options, address_line1, address_line2, address_line3, phone, delivery_mode, latitude, longitude, accepting_orders')
         .eq('restaurant_id', rawCode)
         .maybeSingle();
       if (cancelled) return;
@@ -107,11 +110,11 @@ export default function PublicOrderPage() {
               again.
             </p>
             <Link
-              href="/order"
+              href="/restaurants"
               className="inline-flex items-center justify-center gap-2 w-full bg-[#1E5FE8] text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
             >
               <Store className="h-4 w-4" />
-              Back to Code Entry
+              Browse restaurants
             </Link>
           </div>
         </div>
@@ -126,7 +129,8 @@ export default function PublicOrderPage() {
     <CustomerMode
       restaurantProp={restaurant}
       customerMode
-      onBack={() => router.push('/order')}
+      acceptingOrders={restaurant.accepting_orders !== false}
+      onBack={() => router.push('/restaurants')}
     />
   );
 }

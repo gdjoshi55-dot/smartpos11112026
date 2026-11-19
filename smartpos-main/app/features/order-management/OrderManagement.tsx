@@ -187,6 +187,10 @@ export default function OrderManagement({
   onOrderUpdate,
 }: OrderManagementProps) {
   const currency = restaurant.currency || 'INR';
+  // Paid customer/POS orders are stored as "settled" but still need to be
+  // prepared. Show them in the restaurant's order-status workflow as pending.
+  const effectiveStatus = (status?: string | null) =>
+    status === 'settled' ? 'pending' : status || 'pending';
   const [orders, setOrders] = useState<Order[]>([]);
   const [assignments, setAssignments] = useState<Record<number, Assignment>>({});
   const [riders, setRiders] = useState<RiderOption[]>([]);
@@ -364,7 +368,7 @@ export default function OrderManagement({
 
   const filteredOrders = orders.filter(order => {
     if (statusFilter === "all") return true;
-    return order.status === statusFilter;
+    return effectiveStatus(order.status) === statusFilter;
   });
 
   if (loading) {
@@ -421,7 +425,7 @@ export default function OrderManagement({
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Pending Orders</p>
               <p className="text-2xl font-bold text-gray-900">
-                {orders.filter(order => order.status === 'pending' || !order.status).length}
+                {orders.filter(order => effectiveStatus(order.status) === 'pending').length}
               </p>
             </div>
           </div>
@@ -466,10 +470,15 @@ export default function OrderManagement({
                       <h4 className="text-lg font-medium text-gray-900">
                         Order #{order.id}
                       </h4>
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(order.status || 'pending')}`}>
-                        {getStatusIcon(order.status || 'pending')}
-                        {(order.status || 'pending').charAt(0).toUpperCase() + (order.status || 'pending').slice(1).replace('_', ' ')}
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(effectiveStatus(order.status))}`}>
+                        {getStatusIcon(effectiveStatus(order.status))}
+                        {effectiveStatus(order.status).charAt(0).toUpperCase() + effectiveStatus(order.status).slice(1).replace('_', ' ')}
                       </span>
+                      {order.status === 'settled' && (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-emerald-100 text-xs font-medium text-emerald-700">
+                          Paid
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center space-x-4 text-sm text-gray-600 mb-3 flex-wrap">
@@ -659,7 +668,7 @@ export default function OrderManagement({
                           </button>
                         )}
                         */}
-                        {(order.status === 'pending' || !order.status) && (
+                        {effectiveStatus(order.status) === 'pending' && (
                           <button
                             onClick={() => updateOrderStatus(order.id, 'in_progress')}
                             disabled={updatingOrderId === order.id}
@@ -669,7 +678,7 @@ export default function OrderManagement({
                             Start Preparing
                           </button>
                         )}
-                        {order.status === 'in_progress' && (
+                        {effectiveStatus(order.status) === 'in_progress' && (
                           <button
                             onClick={() => updateOrderStatus(order.id, 'completed')}
                             disabled={updatingOrderId === order.id}
@@ -679,7 +688,7 @@ export default function OrderManagement({
                             Mark Complete
                           </button>
                         )}
-                        {(order.status === 'pending' || order.status === 'in_progress') && (
+                        {['pending', 'in_progress'].includes(effectiveStatus(order.status)) && (
                           <button
                             onClick={() => updateOrderStatus(order.id, 'cancelled')}
                             disabled={updatingOrderId === order.id}

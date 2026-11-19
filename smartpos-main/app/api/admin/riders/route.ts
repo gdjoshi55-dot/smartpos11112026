@@ -128,8 +128,77 @@ export async function GET(req: NextRequest) {
 
     const ridersWithDocuments = await attachSignedDocuments(admin, riders);
 
+    // Platform rider pay configuration + per-rider payout totals.
+    const { data: settingsRow } = await admin
+      .from('platform_settings')
+      .select(
+        'rider_base_pay, rider_per_km, rider_free_km, rider_long_trip_km, rider_long_trip_bonus, rider_surge_percent, rider_incentive_target_orders, rider_incentive_weekday, rider_incentive_weekend'
+      )
+      .eq('id', 1)
+      .maybeSingle();
+
+    const riderIds = riders.map((r: any) => r.id);
+    const payoutByRider: Record<
+      string,
+      { pending: number; paid: number; deliveries: number }
+    > = {};
+
+    if (riderIds.length > 0) {
+      const { data: assignmentRows } = await admin
+        .from('delivery_assignments')
+        .select('rider_id, payout_amount, payout_status')
+        .in('rider_id', riderIds)
+        .eq('status', 'delivered');
+
+      for (const row of (assignmentRows || []) as any[]) {
+        const key = row.rider_id as string;
+        if (!key) continue;
+        if (!payoutByRider[key]) {
+          payoutByRider[key] = { pending: 0, paid: 0, deliveries: 0 };
+        }
+        const amount = Number(row.payout_amount || 0);
+        payoutByRider[key].deliveries += 1;
+        if (row.payout_status === 'paid') {
+          payoutByRider[key].paid += amount;
+        } else {
+          payoutByRider[key].pending += amount;
+        }
+      }
+    }
+
+    const ridersWithPayouts = ridersWithDocuments.map((rider: any) => {
+      const payout = payoutByRider[rider.id] || {
+        pending: 0,
+        paid: 0,
+        deliveries: 0,
+      };
+      return {
+        ...rider,
+        pending_payout: Math.round(payout.pending * 100) / 100,
+        paid_payout: Math.round(payout.paid * 100) / 100,
+        delivery_count: payout.deliveries,
+      };
+    });
+
     return NextResponse.json({
-      riders: ridersWithDocuments,
+      riders: ridersWithPayouts,
+      settings: {
+        rider_base_pay: Number(settingsRow?.rider_base_pay || 0),
+        rider_per_km: Number(settingsRow?.rider_per_km || 0),
+        rider_free_km: Number(settingsRow?.rider_free_km || 0),
+        rider_long_trip_km: Number(settingsRow?.rider_long_trip_km || 0),
+        rider_long_trip_bonus: Number(settingsRow?.rider_long_trip_bonus || 0),
+        rider_surge_percent: Number(settingsRow?.rider_surge_percent || 0),
+        rider_incentive_target_orders: Number(
+          settingsRow?.rider_incentive_target_orders || 0
+        ),
+        rider_incentive_weekday: Number(
+          settingsRow?.rider_incentive_weekday || 0
+        ),
+        rider_incentive_weekend: Number(
+          settingsRow?.rider_incentive_weekend || 0
+        ),
+      },
       counts: {
         total: riders.length,
         pending: riders.filter(
@@ -167,11 +236,101 @@ export async function PATCH(req: NextRequest) {
     const id = String(body.id || '').trim();
     const action = String(body.action || '').trim();
 
+    const admin = getAdminClient();
+    const now = new Date().toISOString();
+
+    if (action === 'update-settings') {
+      const basePay = Number(body.rider_base_pay ?? body.riderBasePay ?? 0);
+      const perKm = Number(body.rider_per_km ?? body.riderPerKm ?? 0);
+      const freeKm = Number(body.rider_free_km ?? body.riderFreeKm ?? 3.5);
+      const longTripKm = Number(
+        body.rider_long_trip_km ?? body.riderLongTripKm ?? 10
+      );
+      const longTripBonus = Number(
+        body.rider_long_trip_bonus ?? body.riderLongTripBonus ?? 25
+      );
+      const surgePercent = Number(
+        body.rider_surge_percent ?? body.riderSurgePercent ?? 30
+      );
+      const incentiveTarget = Math.round(
+        Number(
+          body.rider_incentive_target_orders ??
+            body.riderIncentiveTargetOrders ??
+            10
+        )
+      );
+      const incentiveWeekday = Number(
+        body.rider_incentive_weekday ?? body.riderIncentiveWeekday ?? 350
+      );
+      const incentiveWeekend = Number(
+        body.rider_incentive_weekend ?? body.riderIncentiveWeekend ?? 400
+      );
+      const perKmRush = Number(
+        body.rider_per_km_rush ?? body.riderPerKmRush ?? NaN
+      );
+      const numericValues = [
+        basePay,
+        perKm,
+        freeKm,
+        longTripKm,
+        longTripBonus,
+        surgePercent,
+        incentiveTarget,
+        incentiveWeekday,
+        incentiveWeekend,
+      ];
+      if (
+        numericValues.some((value) => !Number.isFinite(value) || value < 0)
+      ) {
+        return NextResponse.json(
+          { error: 'Invalid payout settings' },
+          { status: 400 }
+        );
+      }
+      const { data: settings, error: settingsError } = await admin
+        .from('platform_settings')
+        .update({
+          rider_base_pay: basePay,
+          rider_per_km: perKm,
+          rider_free_km: freeKm,
+          rider_long_trip_km: longTripKm,
+          rider_long_trip_bonus: longTripBonus,
+          rider_surge_percent: surgePercent,
+          rider_incentive_target_orders: incentiveTarget,
+          rider_incentive_weekday: incentiveWeekday,
+          rider_incentive_weekend: incentiveWeekend,
+          ...(Number.isFinite(perKmRush) && perKmRush >= 0
+            ? { rider_per_km_rush: perKmRush }
+            : {}),
+          updated_at: now,
+        })
+        .eq('id', 1)
+        .select(
+          'rider_base_pay, rider_per_km, rider_free_km, rider_long_trip_km, rider_long_trip_bonus, rider_surge_percent, rider_incentive_target_orders, rider_incentive_weekday, rider_incentive_weekend'
+        )
+        .maybeSingle();
+      if (settingsError) throw settingsError;
+      return NextResponse.json({ success: true, settings });
+    }
+
     if (!id) {
       return NextResponse.json({ error: 'id is required' }, { status: 400 });
     }
 
-    const admin = getAdminClient();
+    if (action === 'mark-paid') {
+      const { data: updated, error: payoutError } = await admin
+        .from('delivery_assignments')
+        .update({ payout_status: 'paid', paid_at: now })
+        .eq('rider_id', id)
+        .eq('status', 'delivered')
+        .eq('payout_status', 'pending')
+        .select('id');
+      if (payoutError) throw payoutError;
+      return NextResponse.json({
+        success: true,
+        updated: (updated || []).length,
+      });
+    }
 
     if (action === 'approve' || action === 'verify') {
       const { data: current, error: fetchError } = await admin
@@ -208,7 +367,6 @@ export async function PATCH(req: NextRequest) {
     }
 
     const ownerLogin = (req.headers.get('x-login-name') || '').trim();
-    const now = new Date().toISOString();
 
     const patches: Record<string, Record<string, unknown>> = {
       approve: {
@@ -240,7 +398,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            'action must be approve, reject, activate, deactivate, verify or unverify',
+            'action must be approve, reject, activate, deactivate, verify, unverify, mark-paid or update-settings',
         },
         { status: 400 }
       );

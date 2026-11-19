@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { ShoppingCart, Plus, Minus, Printer, MessageCircle, X, Search, CreditCard, UtensilsCrossed, ShoppingBag, Truck, Clock, Store, AlertTriangle, Tag, Star } from "lucide-react";
+import Link from "next/link";
+import { ShoppingCart, Plus, Minus, Printer, MessageCircle, X, Search, CreditCard, UtensilsCrossed, ShoppingBag, Truck, Clock, Store, AlertTriangle, Tag, Star, MapPin, PowerOff, User, LogIn, ArrowLeft } from "lucide-react";
 import { usePOSStore, checkMenuItemsStock, checkAllMenuItemsStock } from "@/lib/store";
 import type { MenuItemStockStatus } from "@/lib/store";
 import { useAuth } from "@/contexts/AuthContext";
+import { useCustomerAuth } from "@/contexts/CustomerAuthContext";
 import { formatCurrency } from "@/lib/utils";
 import ItemOptionsDialog from "@/components/ui/ItemOptionsDialog";
 import { supabase } from "@/lib/supabase";
@@ -160,6 +162,49 @@ async function postOrderRewards(opts: {
   }
 }
 
+async function fetchDeliveryDistance(
+  restaurantId: string,
+  customer: { address?: string; latitude?: number; longitude?: number }
+): Promise<{
+  distanceKm: number;
+  isRush: boolean;
+  customerLat: number;
+  customerLng: number;
+} | null> {
+  if (
+    !customer.address &&
+    (customer.latitude == null || customer.longitude == null)
+  ) {
+    return null;
+  }
+  try {
+    const res = await fetch("/api/geo/distance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        restaurantId,
+        customerAddress: customer.address,
+        customerLat: customer.latitude,
+        customerLng: customer.longitude,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.success) {
+      console.error("Distance lookup failed:", data?.error);
+      return null;
+    }
+    return {
+      distanceKm: Number(data.distanceKm),
+      isRush: Boolean(data.isRush),
+      customerLat: Number(data.customerLat),
+      customerLng: Number(data.customerLng),
+    };
+  } catch (err) {
+    console.error("Distance lookup error:", err);
+    return null;
+  }
+}
+
 function CustomerInfoModal({
   onSubmit,
   onCancel,
@@ -171,8 +216,22 @@ function CustomerInfoModal({
   loyaltySettings,
   currency,
   hasNewItems,
+  initialName,
+  initialPhone,
+  initialEmail,
+  initialAddress,
 }: {
-  onSubmit: (info: { name: string; phone: string; email?: string; address?: string; redeemPoints?: number; loyaltyBalance?: number }) => void;
+  onSubmit: (info: {
+    name: string;
+    phone: string;
+    email?: string;
+    address?: string;
+    latitude?: number;
+    longitude?: number;
+    redeemPoints?: number;
+    loyaltyBalance?: number;
+    tip?: number;
+  }) => void;
   onCancel: () => void;
   restaurantId?: string;
   isDelivery: boolean;
@@ -182,15 +241,23 @@ function CustomerInfoModal({
   loyaltySettings: LoyaltySettingsLike | null;
   currency: string;
   hasNewItems: boolean;
+  initialName?: string;
+  initialPhone?: string;
+  initialEmail?: string;
+  initialAddress?: string;
 }) {
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [address, setAddress] = useState("");
+  const [name, setName] = useState(initialName || "");
+  const [phone, setPhone] = useState(initialPhone || "");
+  const [email, setEmail] = useState(initialEmail || "");
+  const [address, setAddress] = useState(initialAddress || "");
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+  const [locating, setLocating] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
   const [foundCustomer, setFoundCustomer] = useState(false);
   const [loyaltyBalance, setLoyaltyBalance] = useState<number | null>(null);
   const [redeemPoints, setRedeemPoints] = useState("");
+  const [tip, setTip] = useState("0");
   const [couponLimitError, setCouponLimitError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -260,6 +327,32 @@ function CustomerInfoModal({
       (!!loyaltySettings && Number(loyaltySettings.min_redeem_points || 0) <= pts));
   const redemptionPreview = redeemValid && loyaltySettings ? redeemValue(loyaltySettings, pts) : 0;
   const payableAfterLoyalty = Math.max(0, discountedTotalWithTax - redemptionPreview);
+  const tipValue = Math.max(0, Number(tip) || 0);
+
+  const captureLocation = () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      toast.error("Location is not available on this device");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLatitude(position.coords.latitude);
+        setLongitude(position.coords.longitude);
+        setLocating(false);
+        toast.success("Delivery location captured");
+      },
+      (err) => {
+        setLocating(false);
+        toast.error(
+          err.code === err.PERMISSION_DENIED
+            ? "Location permission denied. Enter the address instead."
+            : "Could not get your location. Enter the address instead."
+        );
+      },
+      { enableHighAccuracy: true, maximumAge: 60000, timeout: 20000 }
+    );
+  };
 
   const handleSubmit = () => {
     if (!name.trim() || !phone.trim()) {
@@ -291,14 +384,17 @@ function CustomerInfoModal({
       phone: phone.trim(),
       email: email.trim() || undefined,
       address: address.trim() || undefined,
+      latitude: latitude ?? undefined,
+      longitude: longitude ?? undefined,
       redeemPoints: pts > 0 ? pts : 0,
       loyaltyBalance: balance > 0 ? balance : undefined,
+      tip: tipValue > 0 ? tipValue : 0,
     });
   };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+      <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[calc(100vh-2rem)] overflow-y-auto p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900">Customer Information</h3>
           <button onClick={onCancel} className="text-gray-400 hover:text-gray-600">
@@ -442,6 +538,65 @@ function CustomerInfoModal({
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                 required
               />
+              <button
+                type="button"
+                onClick={captureLocation}
+                disabled={locating}
+                className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 hover:text-blue-800 disabled:opacity-50"
+              >
+                <MapPin className="h-3.5 w-3.5" />
+                {locating
+                  ? "Getting your location..."
+                  : latitude != null && longitude != null
+                  ? "Location captured — tap to refresh"
+                  : "Use my current location for accurate distance"}
+              </button>
+              {latitude != null && longitude != null && (
+                <p className="mt-1 text-[11px] text-green-600">
+                  Delivery distance will be calculated from this location.
+                </p>
+              )}
+            </div>
+          )}
+          {isDelivery && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-emerald-800">Tip your rider</p>
+                <span className="text-xs text-emerald-700">100% goes to the rider</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[0, 20, 30, 50].map((value) => {
+                  const selected = tipValue === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setTip(String(value))}
+                      className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
+                        selected
+                          ? "border-emerald-500 bg-white text-emerald-700"
+                          : "border-emerald-200 bg-white/60 text-emerald-700 hover:bg-white"
+                      }`}
+                    >
+                      {value === 0 ? "No tip" : formatCurrency(value, currency)}
+                    </button>
+                  );
+                })}
+              </div>
+              <input
+                type="number"
+                min={0}
+                step="1"
+                value={tip}
+                onChange={(e) => setTip(e.target.value.replace(/[^0-9.]/g, ""))}
+                placeholder="Custom tip"
+                className="w-full px-3 py-2 border border-emerald-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-sm"
+              />
+              {tipValue > 0 && (
+                <p className="text-xs text-emerald-700">
+                  Total including tip: {formatCurrency(payableAfterLoyalty + tipValue, currency)}
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -570,7 +725,7 @@ function PaymentModal({
   if (!paymentMethod) {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+        <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[calc(100vh-2rem)] overflow-y-auto p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900">Choose Payment Method</h3>
             <button onClick={onCancel} className="text-gray-400 hover:text-gray-600">
@@ -608,7 +763,7 @@ function PaymentModal({
   if (paymentMethod === "cash") {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+        <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[calc(100vh-2rem)] overflow-y-auto p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900">Cash Payment</h3>
             <button onClick={() => setPaymentMethod(null)} className="text-gray-400 hover:text-gray-600">
@@ -659,7 +814,7 @@ function PaymentModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 text-center">
+      <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[calc(100vh-2rem)] overflow-y-auto p-6 text-center">
         <h3 className="text-lg font-semibold text-gray-900 mb-2">Processing Payment</h3>
         <p className="text-gray-600 mb-6">Amount: {formatCurrency(amount, currency)}</p>
         <button
@@ -735,7 +890,7 @@ function ReceiptModal({ order, currency, onClose }: { order: any; currency: stri
             <span>{formatCurrency(order.subtotal, currency)}</span>
           </div>
           {order.discountAmount > 0 && (
-            <div className="flex justify-between text-sm text-green-600">
+<div className="flex justify-between text-xs leading-tight text-green-600">
               <span>Discount{order.promoCode ? ` (${order.promoCode})` : ""}:</span>
               <span>-{formatCurrency(order.discountAmount, currency)}</span>
             </div>
@@ -754,6 +909,12 @@ function ReceiptModal({ order, currency, onClose }: { order: any; currency: stri
             <div className="flex justify-between text-sm">
               <span>Points Earned:</span>
               <span>{order.loyaltyPointsEarned} pts</span>
+            </div>
+          )}
+          {Number(order.customerInfo?.tip || 0) > 0 && (
+            <div className="flex justify-between text-sm text-emerald-700">
+              <span>Rider tip:</span>
+              <span>{formatCurrency(Number(order.customerInfo.tip), currency)}</span>
             </div>
           )}
           <div className="flex justify-between font-bold text-base pt-1 border-t">
@@ -819,6 +980,7 @@ export default function CustomerMode({
   restaurantProp,
   customerMode,
   showCustomerBranding,
+  acceptingOrders = true,
 }: {
   onBack: () => void;
   restaurantProp?: {
@@ -830,10 +992,15 @@ export default function CustomerMode({
     address_line2?: string | null;
     address_line3?: string | null;
     phone?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    accepting_orders?: boolean | null;
   } | null;
   customerMode?: boolean;
   showCustomerBranding?: boolean;
+  acceptingOrders?: boolean;
 }) {
+  const isOrderingOpen = acceptingOrders && restaurantProp?.accepting_orders !== false;
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [searchTerm, setSearchTerm] = useState("");
   const [optionsDialogItem, setOptionsDialogItem] = useState<any>(null);
@@ -849,8 +1016,11 @@ export default function CustomerMode({
     phone: string;
     email?: string;
     address?: string;
+    latitude?: number;
+    longitude?: number;
     redeemPoints?: number;
     loyaltyBalance?: number;
+    tip?: number;
   } | null>(null);
   const [orderType, setOrderType] = useState<"dinein" | "takeaway" | "delivery">(customerMode ? "delivery" : "dinein");
   const [estimatedDeliveryTime, setEstimatedDeliveryTime] = useState<number>(30);
@@ -882,6 +1052,11 @@ export default function CustomerMode({
     clearStockAlerts,
   } = usePOSStore();
   const { restaurant: authRestaurant } = useAuth();
+  const {
+    customer: customerAccount,
+    refresh: refreshCustomerAccount,
+    updateProfile: updateCustomerProfile,
+  } = useCustomerAuth();
   // Public/customer mode is driven purely by the restaurant code — it must never
   // fall back to (or share) the main SmartPOS login session.
   const restaurant = (customerMode && restaurantProp) ? restaurantProp : (restaurantProp || authRestaurant);
@@ -1086,6 +1261,10 @@ export default function CustomerMode({
   );
   const taxAmount = useMemo(() => Math.round(discountedSubtotal * 0.18), [discountedSubtotal]);
   const totalWithTax = useMemo(() => discountedSubtotal + taxAmount, [discountedSubtotal, taxAmount]);
+  const tipAmount = useMemo(
+    () => (orderType === "delivery" ? Math.max(0, Number(customerInfo?.tip) || 0) : 0),
+    [orderType, customerInfo?.tip]
+  );
   const cartItemCount = useMemo(() => cart.reduce((s, i) => s + i.quantity, 0), [cart]);
 
   const categories = useMemo(() => {
@@ -1153,6 +1332,10 @@ export default function CustomerMode({
 
   const handleProceedToPayment = () => {
     if (!canPay) return;
+    if (customerMode && !isOrderingOpen) {
+      toast.error("We are closed now. Please try again during opening hours.");
+      return;
+    }
     const unavailable = stockCheckResults.filter((r) => !r.available);
     if (unavailable.length > 0) {
       toast(
@@ -1217,8 +1400,11 @@ export default function CustomerMode({
     phone: string;
     email?: string;
     address?: string;
+    latitude?: number;
+    longitude?: number;
     redeemPoints?: number;
     loyaltyBalance?: number;
+    tip?: number;
   }) => {
     setCustomerInfo(info);
     setShowCustomerInfo(false);
@@ -1231,7 +1417,25 @@ export default function CustomerMode({
         phone: info.phone,
         email: info.email,
         address: info.address,
+        account_id: customerMode && customerAccount ? customerAccount.id : null,
       });
+    }
+
+    if (customerMode && customerAccount) {
+      const nextName = info.name?.trim() || customerAccount.name;
+      const nextPhone = info.phone || null;
+      const nextAddress = info.address || null;
+      if (
+        nextName !== customerAccount.name ||
+        (nextPhone && nextPhone !== customerAccount.phone) ||
+        (nextAddress && nextAddress !== customerAccount.address)
+      ) {
+        updateCustomerProfile({
+          name: nextName,
+          phone: nextPhone,
+          address: nextAddress,
+        }).catch(() => {});
+      }
     }
   };
 
@@ -1273,6 +1477,8 @@ export default function CustomerMode({
       const discountedSubtotalFinal = Math.max(0, cartTotal - couponDiscount);
       const cartTaxFinal = Math.round(discountedSubtotalFinal * 0.18);
       const cartTotalWithTaxFinal = discountedSubtotalFinal + cartTaxFinal;
+      const tipAmountFinal =
+        orderType === "delivery" ? Math.max(0, Number(customerInfo.tip) || 0) : 0;
       const redeemPts = hasNewItems ? customerInfo.redeemPoints || 0 : 0;
       const redeemedValueFinal =
         redeemPts > 0 && loyaltySettings ? redeemValue(loyaltySettings, redeemPts) : 0;
@@ -1281,7 +1487,7 @@ export default function CustomerMode({
       const grandTotal = isOffPremise
         ? cartTotalWithTaxFinal
         : activeOrdersTotal + cartTotalWithTaxFinal;
-      const finalPayable = Math.max(0, grandTotal - redeemedValueFinal);
+      const finalPayable = Math.max(0, grandTotal - redeemedValueFinal) + tipAmountFinal;
       const combinedSubtotal = isOffPremise
         ? discountedSubtotalFinal
         : activeOrdersSubtotal + discountedSubtotalFinal;
@@ -1295,6 +1501,26 @@ export default function CustomerMode({
         paymentData.razorpayPaymentId ||
         (paymentData.method === "cash" ? `cash_payment_${Date.now()}` : "");
 
+      // Resolve the driving distance before inserting the order so per-km
+      // rider pay has the correct distance. Never block checkout on failure.
+      let deliveryDistanceKm: number | null = null;
+      let deliveryRushHour = false;
+      let customerLatitude = customerInfo.latitude ?? null;
+      let customerLongitude = customerInfo.longitude ?? null;
+      if (orderType === "delivery") {
+        const distance = await fetchDeliveryDistance(restaurantId, {
+          address: customerInfo.address,
+          latitude: customerInfo.latitude,
+          longitude: customerInfo.longitude,
+        });
+        if (distance) {
+          deliveryDistanceKm = distance.distanceKm;
+          deliveryRushHour = distance.isRush;
+          customerLatitude = distance.customerLat;
+          customerLongitude = distance.customerLng;
+        }
+      }
+
       let receiptId: number;
 
       if (cart.length > 0) {
@@ -1307,11 +1533,19 @@ export default function CustomerMode({
           items: cartItems,
           subtotal: discountedSubtotalFinal,
           tax: cartTaxFinal,
-          total: Math.max(0, cartTotalWithTaxFinal - redeemedValueFinal),
+          total: Math.max(0, cartTotalWithTaxFinal - redeemedValueFinal) + tipAmountFinal,
           customer_name: customerInfo.name,
           customer_phone: customerInfo.phone,
           customer_email: customerInfo.email || null,
           customer_address: customerInfo.address || null,
+          customer_latitude: customerLatitude,
+          customer_longitude: customerLongitude,
+          delivery_distance_km: deliveryDistanceKm,
+          delivery_rush_hour: deliveryRushHour,
+          customer_tip: tipAmountFinal,
+          source: (customerMode ? "customer" : "pos") as "customer" | "pos",
+          customer_account_id:
+            customerMode && customerAccount ? customerAccount.id : null,
           payment_method: paymentData.method,
           status: "settled",
           order_type: orderType,
@@ -1369,6 +1603,9 @@ export default function CustomerMode({
       clearCart();
       setSettleMode(false);
       setCustomerInfo(null);
+      if (customerMode && customerAccount) {
+        void refreshCustomerAccount();
+      }
       toast.success(
         isOffPremise
           ? `Payment received �?" Order #${receiptId} sent to kitchen`
@@ -1468,8 +1705,8 @@ export default function CustomerMode({
   );
 
   const CartContent = () => (
-    <div className="h-full flex flex-col">
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+    <div className="flex-1 min-h-0 flex flex-col">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
         {settleMode && !isOffPremise && activeOrders.length > 0 && (
           <div className="bg-amber-50 border border-amber-300 text-amber-800 rounded-lg px-3 py-2 text-xs font-medium">
             Settlement Mode — paying for {activeOrders.length} previous order(s) + current cart
@@ -1552,12 +1789,12 @@ export default function CustomerMode({
           </>
         )}
       </div>
-      <div className="p-4 border-t bg-gray-50 space-y-2">
+      <div className="shrink-0 px-3 py-2 border-t bg-gray-50 space-y-1.5">
         {isCheckingStock && (
           <p className="text-[11px] text-gray-400 text-center animate-pulse">Checking stock availability...</p>
         )}
         {stockCheckResults.length > 0 && stockCheckResults.some((r) => !r.available) && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-1.5">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-2 space-y-1">
             <p className="text-xs font-semibold text-red-700 flex items-center gap-1">
               <AlertTriangle className="w-3.5 h-3.5" /> Insufficient Stock
             </p>
@@ -1580,26 +1817,26 @@ export default function CustomerMode({
             </p>
           </div>
         )}
-        <div className="bg-white border border-gray-200 rounded-lg p-2">
+        <div className="bg-white border border-gray-200 rounded-lg p-1.5">
           {appliedCoupon ? (
             <div className="flex items-center justify-between">
               <div className="flex items-center min-w-0">
-                <Tag className="h-4 w-4 text-green-600 mr-1.5 flex-shrink-0" />
+                <Tag className="h-3.5 w-3.5 text-green-600 mr-1 flex-shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold text-green-700 truncate">{appliedCoupon.code}</p>
+                  <p className="text-[11px] font-semibold text-green-700 truncate leading-tight">{appliedCoupon.code}</p>
                   {couponNote ? (
-                    <p className="text-[11px] text-amber-600">{couponNote}</p>
+                    <p className="text-[10px] text-amber-600 leading-tight">{couponNote}</p>
                   ) : (
-                    <p className="text-[11px] text-green-600">-{formatCurrency(couponDiscount, currency)} off</p>
+                    <p className="text-[10px] text-green-600 leading-tight">-{formatCurrency(couponDiscount, currency)} off</p>
                   )}
                 </div>
               </div>
               <button
                 onClick={handleRemoveCoupon}
-                className="text-gray-400 hover:text-red-500 p-1"
+                className="text-gray-400 hover:text-red-500 p-0.5"
                 title="Remove coupon"
               >
-                <X className="h-4 w-4" />
+                <X className="h-3.5 w-3.5" />
               </button>
             </div>
           ) : (
@@ -1610,12 +1847,12 @@ export default function CustomerMode({
                 onChange={(e) => setCouponInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") handleApplyCoupon(); }}
                 placeholder="Enter coupon code"
-                className="flex-1 px-2.5 py-1.5 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 outline-none uppercase"
+                className="flex-1 px-2 py-1 border border-gray-300 rounded-md text-xs focus:ring-2 focus:ring-blue-500 outline-none uppercase"
               />
               <button
                 onClick={handleApplyCoupon}
                 disabled={!couponInput.trim()}
-                className="px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 disabled:opacity-50 flex items-center"
+                className="px-2.5 py-1 bg-indigo-600 text-white text-xs rounded-md hover:bg-indigo-700 disabled:opacity-50 flex items-center"
               >
                 Apply
               </button>
@@ -1624,17 +1861,17 @@ export default function CustomerMode({
         </div>
         {activeOrders.length > 0 && !isOffPremise && (
           <>
-            <div className="flex justify-between text-sm text-gray-600">
+            <div className="flex justify-between text-xs leading-tight text-gray-600">
               <span>Previous Subtotal</span>
               <span>{formatCurrency(activeOrdersSubtotal, currency)}</span>
             </div>
-            <div className="flex justify-between text-sm text-gray-600">
+            <div className="flex justify-between text-xs leading-tight text-gray-600">
               <span>Previous Tax</span>
               <span>{formatCurrency(activeOrdersTax, currency)}</span>
             </div>
           </>
         )}
-        <div className="flex justify-between text-sm text-gray-600">
+        <div className="flex justify-between text-xs leading-tight text-gray-600">
           <span>New Subtotal</span>
           <span>{formatCurrency(cartTotal, currency)}</span>
         </div>
@@ -1644,17 +1881,17 @@ export default function CustomerMode({
             <span>-{formatCurrency(couponDiscount, currency)}</span>
           </div>
         )}
-        <div className="flex justify-between text-sm text-gray-600">
+        <div className="flex justify-between text-xs leading-tight text-gray-600">
           <span>New Tax (18%)</span>
           <span>{formatCurrency(taxAmount, currency)}</span>
         </div>
-        <div className="flex justify-between font-bold text-gray-900 pt-2 border-t">
+        <div className="flex justify-between font-bold text-gray-900 text-sm leading-tight pt-1 border-t">
           <span>Grand Total</span>
           <span>{formatCurrency((isOffPremise ? 0 : activeOrdersTotal) + totalWithTax, currency)}</span>
         </div>
         {!isOffPremise && !customerMode && (
           <button
-            className="w-full border border-indigo-500 text-indigo-600 py-3 rounded-lg hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+            className="w-full border border-indigo-500 text-indigo-600 py-2 rounded-lg hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm transition-colors"
             onClick={handleSendToKitchen}
             disabled={cart.length === 0 || sendingToKitchen}
           >
@@ -1662,47 +1899,82 @@ export default function CustomerMode({
           </button>
         )}
         {isOffPremise && !settleMode && !customerMode && (
-          <div className="w-full text-xs text-gray-500 text-center bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
+          <div className="w-full text-[11px] text-gray-500 text-center bg-gray-100 border border-gray-200 rounded-lg px-2 py-1.5">
             Click <span className="font-semibold">Settle Now</span>, then <span className="font-semibold">Place & Pay</span> to send to kitchen
           </div>
         )}
-        <button
-          className={`w-full text-white py-3 rounded-lg font-medium transition-colors mt-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-            settleMode
-              ? "bg-green-600 hover:bg-green-700"
-              : "bg-blue-600 hover:bg-blue-700"
-          }`}
-          onClick={handleProceedToPayment}
-          disabled={!canPay}
-        >
-          Place & Pay
-        </button>
-        <button
-          className="w-full border border-gray-300 py-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm text-gray-600"
-          onClick={clearCart}
-          disabled={cart.length === 0}
-        >
-          Clear Cart
-        </button>
+        <div className="flex gap-2 pt-1">
+          <button
+            className={`flex-1 text-white py-2 rounded-lg font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+              settleMode
+                ? "bg-green-600 hover:bg-green-700"
+                : "bg-blue-600 hover:bg-blue-700"
+            }`}
+            onClick={handleProceedToPayment}
+            disabled={!canPay || (customerMode && !isOrderingOpen)}
+          >
+            {customerMode && !isOrderingOpen ? "We are closed now" : "Place & Pay"}
+          </button>
+          <button
+            className="shrink-0 border border-gray-300 px-3 py-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs text-gray-600"
+            onClick={clearCart}
+            disabled={cart.length === 0}
+          >
+            Clear Cart
+          </button>
+        </div>
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       <header className={isCustomerPresented ? "bg-blue-600 text-white px-4 py-3 shadow-md" : "bg-blue-600 text-white px-4 py-3 flex items-center justify-between shadow-md"}>
         {isCustomerPresented ? (
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div>
-              <h1 className="text-xl font-bold text-white leading-tight">{restaurantName}</h1>
-              {restaurantAddress && (
-                <p className="text-xs text-blue-100/90 leading-snug">{restaurantAddress}</p>
+            <div className="flex items-start gap-2">
+              {customerMode && (
+                <button
+                  type="button"
+                  onClick={onBack}
+                  aria-label="Back to restaurants"
+                  className="mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-lg bg-white/15 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/25"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Back
+                </button>
               )}
-              {restaurantPhone && (
-                <p className="text-xs text-blue-100/90 leading-snug">{restaurantPhone}</p>
-              )}
+              <div>
+                <h1 className="text-xl font-bold text-white leading-tight">{restaurantName}</h1>
+                {restaurantAddress && (
+                  <p className="text-xs text-blue-100/90 leading-snug">{restaurantAddress}</p>
+                )}
+                {restaurantPhone && (
+                  <p className="text-xs text-blue-100/90 leading-snug">{restaurantPhone}</p>
+                )}
+              </div>
             </div>
             <div className="flex items-center space-x-2">
+              {customerMode &&
+                (customerAccount ? (
+                  <Link
+                    href="/customer/account"
+                    className="hidden items-center gap-1 rounded-lg bg-blue-700/60 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-700 sm:inline-flex"
+                  >
+                    <User className="h-3.5 w-3.5" />
+                    {customerAccount.name.split(" ")[0] || "Account"}
+                  </Link>
+                ) : (
+                  <Link
+                    href={`/customer/login?next=${encodeURIComponent(
+                      `/order/${restaurantId || ""}`
+                    )}`}
+                    className="hidden items-center gap-1 rounded-lg bg-white/15 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-white/25 sm:inline-flex"
+                  >
+                    <LogIn className="h-3.5 w-3.5" />
+                    Sign in
+                  </Link>
+                ))}
               <span className="text-sm text-blue-100 hidden sm:inline">{cartItemCount} items</span>
               <button
                 onClick={() => setShowMobileCart(true)}
@@ -1727,6 +1999,15 @@ export default function CustomerMode({
           </>
         )}
       </header>
+
+      {customerMode && !isOrderingOpen && (
+        <div className="bg-red-600 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-medium text-center">
+          <PowerOff className="h-4 w-4 shrink-0" />
+          <span>
+            We are closed now. You can browse the menu, but ordering is disabled.
+          </span>
+        </div>
+      )}
 
       {/* Order type / Table / Tab selector bar */}
       <div className="bg-white border-b border-gray-200 px-4 py-2.5 flex items-center gap-3 overflow-x-auto">
@@ -1932,7 +2213,7 @@ Out of Stock
 
       {showMobileCart && (
         <div className="fixed inset-0 bg-black/50 z-40 flex justify-end">
-          <div className="w-80 bg-white shadow-lg flex flex-col max-w-full">
+          <div className="w-80 bg-white shadow-lg flex flex-col max-w-full h-full">
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
             <h2 className="text-lg font-bold text-gray-900">Cart — {orderTypeLabel}</h2>
               <button
@@ -1959,17 +2240,23 @@ Out of Stock
           loyaltySettings={loyaltySettings}
           currency={currency}
           hasNewItems={cart.length > 0}
+          initialName={customerMode ? customerAccount?.name || "" : ""}
+          initialPhone={customerMode ? customerAccount?.phone || "" : ""}
+          initialEmail={customerMode ? customerAccount?.email || "" : ""}
+          initialAddress={customerMode ? customerAccount?.address || "" : ""}
         />
       )}
       {showPayment && customerInfo && (
         <PaymentModal
-          amount={Math.max(
-            0,
-            (isOffPremise ? totalWithTax : activeOrdersTotal + totalWithTax) -
-              (customerInfo.redeemPoints && loyaltySettings
-                ? redeemValue(loyaltySettings, customerInfo.redeemPoints)
-                : 0)
-          )}
+          amount={
+            Math.max(
+              0,
+              (isOffPremise ? totalWithTax : activeOrdersTotal + totalWithTax) -
+                (customerInfo.redeemPoints && loyaltySettings
+                  ? redeemValue(loyaltySettings, customerInfo.redeemPoints)
+                  : 0)
+            ) + tipAmount
+          }
           restaurantId={restaurantId}
           customerInfo={customerInfo}
           currency={currency}

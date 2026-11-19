@@ -41,6 +41,9 @@ export type Database = {
           razorpay_key_id: string | null;
           razorpay_key_secret: string | null;
           delivery_mode: string | null;
+          latitude: number | null;
+          longitude: number | null;
+          accepting_orders: boolean;
         };
         Insert: {
           restaurant_id: string;
@@ -68,6 +71,9 @@ export type Database = {
           razorpay_key_id?: string | null;
           razorpay_key_secret?: string | null;
           delivery_mode?: string | null;
+          latitude?: number | null;
+          longitude?: number | null;
+          accepting_orders?: boolean;
         };
         Update: {
           restaurant_name?: string;
@@ -94,6 +100,52 @@ export type Database = {
           razorpay_key_id?: string | null;
           razorpay_key_secret?: string | null;
           delivery_mode?: string | null;
+          latitude?: number | null;
+          longitude?: number | null;
+          accepting_orders?: boolean;
+        };
+      };
+      platform_settings: {
+        Row: {
+          id: number;
+          rider_base_pay: number;
+          rider_per_km: number;
+          rider_per_km_rush: number;
+          rider_free_km: number;
+          rider_long_trip_km: number;
+          rider_long_trip_bonus: number;
+          rider_surge_percent: number;
+          rider_incentive_target_orders: number;
+          rider_incentive_weekday: number;
+          rider_incentive_weekend: number;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          rider_base_pay?: number;
+          rider_per_km?: number;
+          rider_per_km_rush?: number;
+          rider_free_km?: number;
+          rider_long_trip_km?: number;
+          rider_long_trip_bonus?: number;
+          rider_surge_percent?: number;
+          rider_incentive_target_orders?: number;
+          rider_incentive_weekday?: number;
+          rider_incentive_weekend?: number;
+          updated_at?: string;
+        };
+        Update: {
+          rider_base_pay?: number;
+          rider_per_km?: number;
+          rider_per_km_rush?: number;
+          rider_free_km?: number;
+          rider_long_trip_km?: number;
+          rider_long_trip_bonus?: number;
+          rider_surge_percent?: number;
+          rider_incentive_target_orders?: number;
+          rider_incentive_weekday?: number;
+          rider_incentive_weekend?: number;
+          updated_at?: string;
         };
       };
       users: {
@@ -261,6 +313,11 @@ export type Database = {
           delivery_rider_id: string | null;
           customer_latitude: number | null;
           customer_longitude: number | null;
+          delivery_distance_km: number | null;
+          delivery_rush_hour: boolean;
+          customer_tip: number;
+          source: string;
+          customer_account_id: number | null;
         };
         Insert: {
           restaurant_id: string;
@@ -274,6 +331,7 @@ export type Database = {
           customer_phone?: string | null;
           customer_email?: string | null;
           customer_address?: string | null;
+          customer_account_id?: number | null;
           payment_method?: string;
           status?: string;
           order_type?: string;
@@ -292,6 +350,10 @@ export type Database = {
           delivery_rider_id?: string | null;
           customer_latitude?: number | null;
           customer_longitude?: number | null;
+          delivery_distance_km?: number | null;
+          delivery_rush_hour?: boolean;
+          customer_tip?: number;
+          source?: string;
         };
         Update: {
           status?: string;
@@ -311,6 +373,11 @@ export type Database = {
           delivery_rider_id?: string | null;
           customer_latitude?: number | null;
           customer_longitude?: number | null;
+          delivery_distance_km?: number | null;
+          delivery_rush_hour?: boolean;
+          customer_tip?: number;
+          source?: string;
+          customer_account_id?: number | null;
         };
       };
       delivery_assignments: {
@@ -329,6 +396,17 @@ export type Database = {
           cancelled_at: string | null;
           created_at: string;
           updated_at: string;
+          distance_km: number | null;
+          billable_km: number;
+          base_pay_amount: number;
+          distance_pay_amount: number;
+          long_trip_bonus_amount: number;
+          surge_pay_amount: number;
+          incentive_amount: number;
+          tip_amount: number;
+          payout_amount: number;
+          payout_status: string;
+          paid_at: string | null;
         };
         Insert: {
           restaurant_id: string;
@@ -342,6 +420,17 @@ export type Database = {
           picked_up_at?: string | null;
           delivered_at?: string | null;
           cancelled_at?: string | null;
+          distance_km?: number | null;
+          billable_km?: number;
+          base_pay_amount?: number;
+          distance_pay_amount?: number;
+          long_trip_bonus_amount?: number;
+          surge_pay_amount?: number;
+          incentive_amount?: number;
+          tip_amount?: number;
+          payout_amount?: number;
+          payout_status?: string;
+          paid_at?: string | null;
         };
         Update: {
           rider_id?: string | null;
@@ -351,6 +440,17 @@ export type Database = {
           picked_up_at?: string | null;
           delivered_at?: string | null;
           cancelled_at?: string | null;
+          distance_km?: number | null;
+          billable_km?: number;
+          base_pay_amount?: number;
+          distance_pay_amount?: number;
+          long_trip_bonus_amount?: number;
+          surge_pay_amount?: number;
+          incentive_amount?: number;
+          tip_amount?: number;
+          payout_amount?: number;
+          payout_status?: string;
+          paid_at?: string | null;
         };
       };
       rider_locations: {
@@ -389,6 +489,7 @@ export type Database = {
           address: string | null;
           birthday: string | null;
           loyalty_points: number;
+          account_id: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -400,6 +501,7 @@ export type Database = {
           address?: string | null;
           birthday?: string | null;
           loyalty_points?: number;
+          account_id?: number | null;
         };
         Update: {
           name?: string;
@@ -407,6 +509,34 @@ export type Database = {
           address?: string | null;
           birthday?: string | null;
           loyalty_points?: number;
+          account_id?: number | null;
+        };
+      };
+      customer_accounts: {
+        Row: {
+          id: number;
+          email: string;
+          password_hash: string;
+          name: string;
+          phone: string | null;
+          address: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          email: string;
+          password_hash: string;
+          name: string;
+          phone?: string | null;
+          address?: string | null;
+        };
+        Update: {
+          email?: string;
+          password_hash?: string;
+          name?: string;
+          phone?: string | null;
+          address?: string | null;
+          updated_at?: string;
         };
       };
       customer_segments: {

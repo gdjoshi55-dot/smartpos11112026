@@ -36,6 +36,7 @@ import {
   CreditCard,
   Shield,
   Tag,
+  Power,
   X,
   Megaphone,
 } from 'lucide-react';
@@ -69,7 +70,7 @@ const ROLE_ACCESS: Record<UserRole, RoleAccess> = {
 };
 
 export default function Dashboard() {
-  const { restaurant, user, isAdmin, signOut } = useAuth();
+  const { restaurant, user, isAdmin, signOut, updateRestaurant } = useAuth();
   const router = useRouter();
   const ownerAccess = isOwner(user?.login_name);
   const [mode, setMode] = useState<'restaurant' | 'customer' | 'kitchen'>('restaurant');
@@ -79,6 +80,7 @@ export default function Dashboard() {
     useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [criticalStockCount, setCriticalStockCount] = useState(0);
+  const [togglingOrders, setTogglingOrders] = useState(false);
 
   useEffect(() => {
     const rid = restaurant?.restaurant_id;
@@ -125,6 +127,29 @@ export default function Dashboard() {
       toast.success('Signed out successfully');
     } catch (error) {
       toast.error('Error signing out');
+    }
+  };
+
+  const handleToggleAcceptingOrders = async () => {
+    if (!restaurant || togglingOrders) return;
+    const next = restaurant.accepting_orders === false;
+    setTogglingOrders(true);
+    try {
+      const { error } = await supabase
+        .from('parameters')
+        .update({ accepting_orders: next })
+        .eq('restaurant_id', restaurant.restaurant_id);
+      if (error) throw error;
+      updateRestaurant({ accepting_orders: next });
+      toast.success(
+        next
+          ? 'Restaurant is now open for online orders'
+          : 'Restaurant closed for online orders'
+      );
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update ordering status');
+    } finally {
+      setTogglingOrders(false);
     }
   };
 
@@ -383,6 +408,25 @@ export default function Dashboard() {
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2">
             {!ownerAccess && <NotificationBell />}
+            {!ownerAccess && isAdmin && (
+              <button
+                onClick={handleToggleAcceptingOrders}
+                disabled={togglingOrders}
+                title={
+                  restaurant.accepting_orders === false
+                    ? 'Open restaurant for online orders'
+                    : 'Close restaurant for online orders'
+                }
+                className={`text-white px-3 sm:px-4 py-2 rounded-lg transition-colors flex items-center text-sm font-medium disabled:opacity-60 ${
+                  restaurant.accepting_orders === false
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-emerald-600 hover:bg-emerald-700'
+                }`}
+              >
+                <Power className="h-4 w-4 mr-2" />
+                {restaurant.accepting_orders === false ? 'Closed' : 'Open'}
+              </button>
+            )}
             {access.customerMode && (
               <button
                 onClick={handleCustomerModeAccess}

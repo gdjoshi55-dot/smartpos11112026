@@ -13,8 +13,10 @@ import {
   Mail,
   Phone,
   RefreshCw,
+  Save,
   ShieldCheck,
   UserX,
+  Wallet,
   X,
   XCircle,
 } from 'lucide-react';
@@ -44,6 +46,9 @@ interface AdminRider {
     police_verification: string | null;
   };
   missing_documents?: string[];
+  pending_payout?: number;
+  paid_payout?: number;
+  delivery_count?: number;
   created_at: string;
 }
 
@@ -108,6 +113,17 @@ export default function RidersPanel() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<RiderFilter>('pending');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [markingPaidId, setMarkingPaidId] = useState<string | null>(null);
+  const [basePay, setBasePay] = useState('30');
+  const [perKm, setPerKm] = useState('15');
+  const [freeKm, setFreeKm] = useState('3.5');
+  const [longTripKm, setLongTripKm] = useState('10');
+  const [longTripBonus, setLongTripBonus] = useState('25');
+  const [surgePercent, setSurgePercent] = useState('30');
+  const [incentiveTarget, setIncentiveTarget] = useState('10');
+  const [incentiveWeekday, setIncentiveWeekday] = useState('350');
+  const [incentiveWeekend, setIncentiveWeekend] = useState('400');
+  const [savingSettings, setSavingSettings] = useState(false);
 
   const adminHeaders = useMemo(
     () => ({
@@ -137,6 +153,25 @@ export default function RidersPanel() {
         setCounts(
           data.counts || { total: 0, pending: 0, approved: 0, online: 0 }
         );
+        if (!silent && data.settings) {
+          setBasePay(String(data.settings.rider_base_pay ?? 30));
+          setPerKm(String(data.settings.rider_per_km ?? 15));
+          setFreeKm(String(data.settings.rider_free_km ?? 3.5));
+          setLongTripKm(String(data.settings.rider_long_trip_km ?? 10));
+          setLongTripBonus(
+            String(data.settings.rider_long_trip_bonus ?? 25)
+          );
+          setSurgePercent(String(data.settings.rider_surge_percent ?? 30));
+          setIncentiveTarget(
+            String(data.settings.rider_incentive_target_orders ?? 10)
+          );
+          setIncentiveWeekday(
+            String(data.settings.rider_incentive_weekday ?? 350)
+          );
+          setIncentiveWeekend(
+            String(data.settings.rider_incentive_weekend ?? 400)
+          );
+        }
         setError(null);
       } catch (err: any) {
         console.error('Error loading riders:', err);
@@ -186,6 +221,89 @@ export default function RidersPanel() {
     }
   };
 
+  const saveSettings = async () => {
+    const basePayValue = Number(basePay);
+    const perKmValue = Number(perKm);
+    const freeKmValue = Number(freeKm);
+    const longTripKmValue = Number(longTripKm);
+    const longTripBonusValue = Number(longTripBonus);
+    const surgePercentValue = Number(surgePercent);
+    const incentiveTargetValue = Math.round(Number(incentiveTarget));
+    const incentiveWeekdayValue = Number(incentiveWeekday);
+    const incentiveWeekendValue = Number(incentiveWeekend);
+    const values = [
+      basePayValue,
+      perKmValue,
+      freeKmValue,
+      longTripKmValue,
+      longTripBonusValue,
+      surgePercentValue,
+      incentiveTargetValue,
+      incentiveWeekdayValue,
+      incentiveWeekendValue,
+    ];
+    if (values.some((value) => !Number.isFinite(value) || value < 0)) {
+      toast.error('Enter valid non-negative payout values');
+      return;
+    }
+    setSavingSettings(true);
+    try {
+      const res = await fetch('/api/admin/riders', {
+        method: 'PATCH',
+        headers: adminHeaders,
+        body: JSON.stringify({
+          action: 'update-settings',
+          rider_base_pay: basePayValue,
+          rider_per_km: perKmValue,
+          rider_free_km: freeKmValue,
+          rider_long_trip_km: longTripKmValue,
+          rider_long_trip_bonus: longTripBonusValue,
+          rider_surge_percent: surgePercentValue,
+          rider_incentive_target_orders: incentiveTargetValue,
+          rider_incentive_weekday: incentiveWeekdayValue,
+          rider_incentive_weekend: incentiveWeekendValue,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to save pay settings');
+      }
+      toast.success('Rider pay settings saved');
+      await loadRiders(true);
+    } catch (err: any) {
+      console.error('Error saving rider settings:', err);
+      toast.error(err?.message || 'Failed to save pay settings');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const markRiderPaid = async (rider: AdminRider) => {
+    setMarkingPaidId(rider.id);
+    try {
+      const res = await fetch('/api/admin/riders', {
+        method: 'PATCH',
+        headers: adminHeaders,
+        body: JSON.stringify({ id: rider.id, action: 'mark-paid' }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to mark payout paid');
+      }
+      toast.success(
+        `Marked ${data.updated || 0} deliver${
+          data.updated === 1 ? 'y' : 'ies'
+        } paid for ${rider.name}`
+      );
+      await loadRiders(true);
+    } catch (err: any) {
+      console.error('Error marking rider paid:', err);
+      toast.error(err?.message || 'Failed to mark payout paid');
+    } finally {
+      setMarkingPaidId(null);
+    }
+  };
+
   const filteredRiders = useMemo(() => {
     if (filter === 'pending') {
       return riders.filter((r) => approvalOf(r) === 'pending');
@@ -195,6 +313,16 @@ export default function RidersPanel() {
     }
     return riders;
   }, [riders, filter]);
+
+  const totalPending = useMemo(
+    () =>
+      riders.reduce((sum, r) => sum + Number(r.pending_payout || 0), 0),
+    [riders]
+  );
+  const totalPaid = useMemo(
+    () => riders.reduce((sum, r) => sum + Number(r.paid_payout || 0), 0),
+    [riders]
+  );
 
   if (loading) {
     return (
@@ -263,6 +391,150 @@ export default function RidersPanel() {
           <p className="mt-1 text-2xl font-bold text-gray-900">
             {counts.total}
           </p>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 className="flex items-center text-sm font-semibold text-gray-900">
+              <Wallet className="mr-2 h-4 w-4 text-emerald-600" />
+              Platform rider pay
+            </h3>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Payout = base pay + distance pay + surge + incentives + customer
+              tips. Distance pay applies only beyond the free radius, and
+              rush-hour deliveries (detected from Google traffic) add the surge
+              percentage.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-4 text-sm">
+              <span className="text-gray-600">
+                Pending:{' '}
+                <span className="font-semibold text-amber-700">
+                  ₹{totalPending.toFixed(2)}
+                </span>
+              </span>
+              <span className="text-gray-600">
+                Paid:{' '}
+                <span className="font-semibold text-emerald-700">
+                  ₹{totalPaid.toFixed(2)}
+                </span>
+              </span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-xs font-medium text-gray-600">
+              Base pay (₹)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={basePay}
+                onChange={(e) => setBasePay(e.target.value)}
+                className="mt-1 block w-28 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs font-medium text-gray-600">
+              Per km (₹)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={perKm}
+                onChange={(e) => setPerKm(e.target.value)}
+                className="mt-1 block w-28 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs font-medium text-gray-600">
+              Free radius (km)
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                value={freeKm}
+                onChange={(e) => setFreeKm(e.target.value)}
+                className="mt-1 block w-28 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs font-medium text-gray-600">
+              Long trip after (km)
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                value={longTripKm}
+                onChange={(e) => setLongTripKm(e.target.value)}
+                className="mt-1 block w-32 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs font-medium text-gray-600">
+              Long trip bonus (₹)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={longTripBonus}
+                onChange={(e) => setLongTripBonus(e.target.value)}
+                className="mt-1 block w-32 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs font-medium text-gray-600">
+              Rush surge (%)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={surgePercent}
+                onChange={(e) => setSurgePercent(e.target.value)}
+                className="mt-1 block w-28 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs font-medium text-gray-600">
+              Incentive target (orders/day)
+              <input
+                type="number"
+                min={0}
+                step="1"
+                value={incentiveTarget}
+                onChange={(e) => setIncentiveTarget(e.target.value)}
+                className="mt-1 block w-36 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs font-medium text-gray-600">
+              Weekday incentive (₹)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={incentiveWeekday}
+                onChange={(e) => setIncentiveWeekday(e.target.value)}
+                className="mt-1 block w-32 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="text-xs font-medium text-gray-600">
+              Weekend incentive (₹)
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={incentiveWeekend}
+                onChange={(e) => setIncentiveWeekend(e.target.value)}
+                className="mt-1 block w-32 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:border-transparent focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              />
+            </label>
+            <button
+              onClick={saveSettings}
+              disabled={savingSettings}
+              className="inline-flex items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {savingSettings ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}
+              Save rates
+            </button>
+          </div>
         </div>
       </div>
 
@@ -355,6 +627,32 @@ export default function RidersPanel() {
                     <p className="mt-1 text-xs text-gray-400">
                       Registered {new Date(rider.created_at).toLocaleString('en-IN')}
                     </p>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs">
+                      <span className="inline-flex items-center font-medium text-emerald-800">
+                        <Wallet className="mr-1 h-3.5 w-3.5" />
+                        Pending ₹
+                        {Number(rider.pending_payout || 0).toFixed(2)}
+                      </span>
+                      <span className="text-emerald-700">
+                        Paid ₹{Number(rider.paid_payout || 0).toFixed(2)} ·{' '}
+                        {rider.delivery_count || 0} deliveries
+                      </span>
+                      {Number(rider.pending_payout || 0) > 0 && (
+                        <button
+                          onClick={() => markRiderPaid(rider)}
+                          disabled={markingPaidId === rider.id}
+                          className="ml-auto inline-flex items-center rounded-md bg-emerald-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {markingPaidId === rider.id ? (
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          ) : (
+                            <Check className="mr-1 h-3 w-3" />
+                          )}
+                          Mark paid
+                        </button>
+                      )}
+                    </div>
 
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
                       {DOCUMENT_ROWS.map((row) => {

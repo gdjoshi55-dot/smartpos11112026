@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import toast from 'react-hot-toast';
-import { Store, MapPin, Users, Lock, Percent, Phone, FileText, Save, CreditCard, Truck } from 'lucide-react';
+import { Store, MapPin, Users, Lock, Percent, Phone, FileText, Save, CreditCard, Truck, Power, LocateFixed } from 'lucide-react';
 
 export default function RestaurantDashboard() {
   const { restaurant, updateRestaurant } = useAuth();
@@ -28,9 +28,44 @@ export default function RestaurantDashboard() {
   const [deliveryMode, setDeliveryMode] = useState<'own' | 'aggregator' | 'both'>(
     (restaurant?.delivery_mode as 'own' | 'aggregator' | 'both') || 'aggregator'
   );
+  const [latitude, setLatitude] = useState(
+    restaurant?.latitude != null ? String(restaurant.latitude) : ''
+  );
+  const [longitude, setLongitude] = useState(
+    restaurant?.longitude != null ? String(restaurant.longitude) : ''
+  );
+  const [acceptingOrders, setAcceptingOrders] = useState(
+    restaurant?.accepting_orders !== false
+  );
+  const [locating, setLocating] = useState(false);
   const [saving, setSaving] = useState(false);
 
   if (!restaurant) return null;
+
+  const captureRestaurantLocation = () => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      toast.error('Location is not available on this device');
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLatitude(position.coords.latitude.toFixed(6));
+        setLongitude(position.coords.longitude.toFixed(6));
+        setLocating(false);
+        toast.success('Restaurant location captured. Save to apply.');
+      },
+      (err) => {
+        setLocating(false);
+        toast.error(
+          err.code === err.PERMISSION_DENIED
+            ? 'Location permission denied.'
+            : 'Could not get the current location.'
+        );
+      },
+      { enableHighAccuracy: true, maximumAge: 60000, timeout: 20000 }
+    );
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -50,6 +85,9 @@ export default function RestaurantDashboard() {
         mpin: mpin,
         tax_rate: parseFloat(taxRate) || 18,
         delivery_mode: deliveryMode,
+        latitude: latitude.trim() ? parseFloat(latitude) : null,
+        longitude: longitude.trim() ? parseFloat(longitude) : null,
+        accepting_orders: acceptingOrders,
       };
 
       if (newPassword) {
@@ -87,6 +125,9 @@ export default function RestaurantDashboard() {
         mpin: mpin,
         tax_rate: parseFloat(taxRate) || 18,
         delivery_mode: deliveryMode,
+        latitude: latitude.trim() ? parseFloat(latitude) : null,
+        longitude: longitude.trim() ? parseFloat(longitude) : null,
+        accepting_orders: acceptingOrders,
       });
 
       if (rzpKeyId.trim() || rzpKeySecret.trim()) {
@@ -129,6 +170,55 @@ export default function RestaurantDashboard() {
           <Save className="h-4 w-4 mr-2" />
           {saving ? 'Saving...' : 'Save Changes'}
         </button>
+      </div>
+
+      {/* Online Ordering */}
+      <div className={sectionClass}>
+        <h3 className={sectionTitleClass}>
+          <Power className="h-4 w-4 mr-2 text-blue-600" />
+          Online Ordering
+        </h3>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-gray-900">
+              {acceptingOrders
+                ? 'Open — accepting customer orders'
+                : 'Closed — not accepting customer orders'}
+            </p>
+            <p className="mt-0.5 text-xs text-gray-500">
+              When closed, customers visiting your online menu see
+              &quot;We are closed now&quot; and cannot place orders. POS orders
+              still work.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={acceptingOrders}
+            onClick={() => setAcceptingOrders((value) => !value)}
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-semibold transition-colors ${
+              acceptingOrders
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+            }`}
+          >
+            <span
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                acceptingOrders ? 'bg-emerald-500' : 'bg-gray-300'
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                  acceptingOrders ? 'translate-x-4' : 'translate-x-0.5'
+                }`}
+              />
+            </span>
+            {acceptingOrders ? 'Open' : 'Closed'}
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-gray-400">
+          Remember to click Save Changes to apply.
+        </p>
       </div>
 
       {/* Restaurant Info */}
@@ -237,6 +327,43 @@ export default function RestaurantDashboard() {
               />
             </div>
           </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className={labelClass}>Latitude</label>
+              <input
+                type="number"
+                step="any"
+                value={latitude}
+                onChange={(e) => setLatitude(e.target.value)}
+                placeholder="e.g. 28.613900"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Longitude</label>
+              <input
+                type="number"
+                step="any"
+                value={longitude}
+                onChange={(e) => setLongitude(e.target.value)}
+                placeholder="e.g. 77.209000"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm"
+              />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={captureRestaurantLocation}
+            disabled={locating}
+            className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-50"
+          >
+            <LocateFixed className="h-4 w-4" />
+            {locating ? 'Getting location...' : 'Use current location'}
+          </button>
+          <p className="text-xs text-gray-400">
+            Used to calculate delivery distance from the restaurant to the
+            customer. If left blank, the address above is geocoded automatically.
+          </p>
         </div>
       </div>
 

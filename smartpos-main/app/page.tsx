@@ -247,6 +247,12 @@ export default function Home() {
           {/* Right CTA */}
           <div className="flex items-center gap-3">
             <Link
+              href="/customer/login"
+              className="hidden sm:inline-flex text-sm font-medium border border-[#1E5FE8] text-[#1E5FE8] px-5 py-2 rounded-lg hover:bg-blue-50 transition-colors"
+            >
+              Customer Login
+            </Link>
+            <Link
               href="/login"
               className="hidden sm:inline-flex text-sm font-medium border border-[#1E5FE8] text-[#1E5FE8] px-5 py-2 rounded-lg hover:bg-blue-50 transition-colors"
             >
@@ -289,6 +295,13 @@ export default function Home() {
               className="block text-sm font-medium text-[#1E5FE8]"
             >
               Login
+            </Link>
+            <Link
+              href="/customer/login"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block text-sm font-medium text-[#1E5FE8]"
+            >
+              Customer Login
             </Link>
           </div>
         )}
@@ -348,6 +361,12 @@ export default function Home() {
                 className="border-2 border-[#1E5FE8] text-[#1E5FE8] px-8 py-3 rounded-lg font-semibold hover:bg-blue-50 transition-colors"
               >
                 Login to SmartPOS
+              </Link>
+              <Link
+                href="/customer/login"
+                className="border-2 border-[#1E5FE8] text-[#1E5FE8] px-8 py-3 rounded-lg font-semibold hover:bg-blue-50 transition-colors"
+              >
+                Customer Login
               </Link>
             </div>
           </div>

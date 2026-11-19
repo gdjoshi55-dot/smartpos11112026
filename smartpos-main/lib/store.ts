@@ -74,6 +74,13 @@ interface POSState {
     customer_address?: string | null;
     payment_method: string;
     order_type?: string;
+    source?: 'pos' | 'customer';
+    customer_latitude?: number | null;
+    customer_longitude?: number | null;
+    delivery_distance_km?: number | null;
+    delivery_rush_hour?: boolean;
+    customer_tip?: number;
+    customer_account_id?: number | null;
     table_number?: number;
     tab_number?: number;
     estimated_delivery_time?: number | null;
@@ -84,7 +91,7 @@ interface POSState {
     loyalty_points_earned?: number;
   }) => Promise<any>;
   lookupCustomerByPhone: (restaurantId: string, phone: string) => Promise<{ name: string; phone: string; email: string | null; address: string | null; loyalty_points?: number | null; birthday?: string | null } | null>;
-  upsertCustomer: (restaurantId: string, customer: { name: string; phone: string; email?: string; address?: string }) => Promise<void>;
+  upsertCustomer: (restaurantId: string, customer: { name: string; phone: string; email?: string; address?: string; account_id?: number | null }) => Promise<void>;
   clearStockAlerts: () => void;
 }
 
@@ -505,7 +512,14 @@ export const usePOSStore = create<POSState>((set, get) => ({
         customer_phone: orderData.customer_phone,
         customer_email: orderData.customer_email || null,
         customer_address: orderData.customer_address || null,
+        customer_latitude: orderData.customer_latitude ?? null,
+        customer_longitude: orderData.customer_longitude ?? null,
+        delivery_distance_km: orderData.delivery_distance_km ?? null,
+        delivery_rush_hour: orderData.delivery_rush_hour ?? false,
+        customer_tip: orderData.customer_tip ?? 0,
+        customer_account_id: orderData.customer_account_id ?? null,
         payment_method: orderData.payment_method,
+        source: orderData.source || 'pos',
         status: orderData.status || 'pending',
         order_type: orderData.order_type || 'customer',
         table_number: tableNumber,
@@ -560,21 +574,30 @@ export const usePOSStore = create<POSState>((set, get) => ({
     }
   },
 
-  upsertCustomer: async (restaurantId: string, customer: { name: string; phone: string; email?: string; address?: string }) => {
+  upsertCustomer: async (restaurantId: string, customer: { name: string; phone: string; email?: string; address?: string; account_id?: number | null }) => {
     try {
+      const payload: {
+        restaurant_id: string;
+        name: string;
+        phone: string;
+        email: string | null;
+        address: string | null;
+        updated_at: string;
+        account_id?: number | null;
+      } = {
+        restaurant_id: restaurantId,
+        name: customer.name,
+        phone: customer.phone,
+        email: customer.email || null,
+        address: customer.address || null,
+        updated_at: new Date().toISOString(),
+      };
+      if (customer.account_id !== undefined) {
+        payload.account_id = customer.account_id;
+      }
       const { error } = await supabase
         .from('customers')
-        .upsert(
-          {
-            restaurant_id: restaurantId,
-            name: customer.name,
-            phone: customer.phone,
-            email: customer.email || null,
-            address: customer.address || null,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'restaurant_id,phone' }
-        );
+        .upsert(payload, { onConflict: 'restaurant_id,phone' });
       if (error) throw error;
     } catch (err) {
       console.error('Error upserting customer:', err);
