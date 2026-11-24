@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import toast from 'react-hot-toast';
-import { Store, MapPin, Users, Lock, Percent, Phone, FileText, Save, CreditCard, Truck, Power, LocateFixed } from 'lucide-react';
+import { Store, MapPin, Users, Lock, Percent, Phone, FileText, Save, CreditCard, Truck, Power, LocateFixed, QrCode, Download, Printer, Copy, ExternalLink } from 'lucide-react';
 
 export default function RestaurantDashboard() {
   const { restaurant, updateRestaurant } = useAuth();
@@ -39,6 +40,37 @@ export default function RestaurantDashboard() {
   );
   const [locating, setLocating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [publicBaseUrl, setPublicBaseUrl] = useState('');
+  const [qrDataUrl, setQrDataUrl] = useState('');
+
+  const orderUrl = publicBaseUrl && restaurant
+    ? `${publicBaseUrl}/order/${encodeURIComponent(restaurant.restaurant_id)}?src=qr`
+    : '';
+
+  useEffect(() => {
+    const configured = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, '');
+    setPublicBaseUrl(configured || window.location.origin);
+  }, []);
+
+  useEffect(() => {
+    if (!orderUrl) return;
+    let cancelled = false;
+    QRCode.toDataURL(orderUrl, {
+      width: 512,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#0B1B3A', light: '#FFFFFF' },
+    })
+      .then((url) => {
+        if (!cancelled) setQrDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) toast.error('Could not generate the QR code.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [orderUrl]);
 
   if (!restaurant) return null;
 
@@ -146,6 +178,26 @@ export default function RestaurantDashboard() {
     }
   };
 
+  const handleDownloadQr = () => {
+    if (!qrDataUrl) return;
+    const link = document.createElement('a');
+    link.href = qrDataUrl;
+    link.download = `${restaurant.restaurant_id}-order-qr.png`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+  const handleCopyLink = async () => {
+    if (!orderUrl) return;
+    try {
+      await navigator.clipboard.writeText(orderUrl);
+      toast.success('Ordering link copied');
+    } catch {
+      toast.error('Could not copy the ordering link');
+    }
+  };
+
   const inputClass =
     'w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-sm';
   const labelClass = 'block text-sm font-medium text-gray-700 mb-1.5';
@@ -219,6 +271,105 @@ export default function RestaurantDashboard() {
         <p className="mt-2 text-xs text-gray-400">
           Remember to click Save Changes to apply.
         </p>
+      </div>
+
+      {/* Self-Ordering QR */}
+      <div className={sectionClass}>
+        <h3 className={sectionTitleClass}>
+          <QrCode className="h-4 w-4 mr-2 text-blue-600" />
+          My Ordering QR
+        </h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Print this code and place it at the counter or on tables. Customers who
+          scan it land directly on your menu in customer mode.
+        </p>
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+          <div className="flex h-40 w-40 shrink-0 items-center justify-center rounded-lg border border-gray-200 bg-white p-2">
+            {qrDataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={qrDataUrl}
+                alt={`Ordering QR for ${restaurant.restaurant_name}`}
+                className="h-full w-full"
+              />
+            ) : (
+              <span className="text-xs text-gray-400">Generating...</span>
+            )}
+          </div>
+          <div className="min-w-0 flex-1 space-y-3">
+            <div>
+              <p className="text-xs font-medium text-gray-500">Ordering link</p>
+              <p
+                className="truncate text-sm font-medium text-gray-900"
+                title={orderUrl}
+              >
+                {orderUrl || 'Preparing...'}
+              </p>
+              <p className="mt-1 text-xs text-gray-400">
+                Code: {restaurant.restaurant_id}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleDownloadQr}
+                disabled={!qrDataUrl}
+                className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-100 disabled:opacity-50"
+              >
+                <Download className="h-4 w-4" />
+                Download PNG
+              </button>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                disabled={!qrDataUrl}
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Printer className="h-4 w-4" />
+                Print poster
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                disabled={!orderUrl}
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+              >
+                <Copy className="h-4 w-4" />
+                Copy link
+              </button>
+            </div>
+            <p className="flex items-center gap-1.5 text-xs text-gray-400">
+              <ExternalLink className="h-3 w-3" />
+              {acceptingOrders
+                ? 'Your menu is open for orders.'
+                : 'Your menu is closed — enable Online Ordering and save before printing.'}
+            </p>
+          </div>
+        </div>
+        <div className="qr-print-only">
+          <div style={{ textAlign: 'center', fontFamily: 'Arial, sans-serif' }}>
+            <p style={{ fontSize: '14pt', letterSpacing: '2px', color: '#1E5FE8', margin: 0 }}>
+              SCAN TO ORDER
+            </p>
+            <h1 style={{ fontSize: '26pt', margin: '10px 0', color: '#0B1B3A' }}>
+              {restaurant.restaurant_name}
+            </h1>
+            {qrDataUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={qrDataUrl}
+                alt="Scan to order"
+                style={{ width: '90mm', height: '90mm', margin: '0 auto', display: 'block' }}
+              />
+            )}
+            <p style={{ fontSize: '12pt', marginTop: '14px' }}>
+              View the menu and place your order directly from your phone.
+            </p>
+            <p style={{ fontSize: '10pt', color: '#666', marginTop: '6px' }}>
+              {restaurant.restaurant_id}
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Restaurant Info */}

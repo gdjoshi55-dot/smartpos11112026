@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import CustomerMode from '@/app/features/customer-mode/CustomerMode';
@@ -26,6 +26,8 @@ interface PublicRestaurant {
 export default function PublicOrderPage() {
   const params = useParams<{ code: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromQr = searchParams.get('src') === 'qr';
   const rawCode = (params?.code || '').toUpperCase().trim();
 
   const [restaurant, setRestaurant] = useState<PublicRestaurant | null>(null);
@@ -130,6 +132,7 @@ export default function PublicOrderPage() {
       restaurantProp={restaurant}
       customerMode
       acceptingOrders={restaurant.accepting_orders !== false}
+      orderSource={fromQr ? 'qr' : 'web'}
       onBack={() => router.push('/restaurants')}
     />
   );

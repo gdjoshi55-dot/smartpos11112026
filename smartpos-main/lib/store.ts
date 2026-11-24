@@ -75,6 +75,7 @@ interface POSState {
     payment_method: string;
     order_type?: string;
     source?: 'pos' | 'customer';
+    source_channel?: 'qr' | 'direct';
     customer_latitude?: number | null;
     customer_longitude?: number | null;
     delivery_distance_km?: number | null;
@@ -498,40 +499,56 @@ export const usePOSStore = create<POSState>((set, get) => ({
     const { selectedTable, selectedTab } = get();
     const tableNumber = orderData.table_number ?? selectedTable;
     const tabNumber = orderData.tab_number ?? selectedTab;
-    const { data, error } = await supabase
+    const orderInsert: Record<string, any> = {
+      restaurant_id: orderData.restaurant_id,
+      razorpay_order_id: orderData.razorpay_order_id || null,
+      razorpay_payment_id: orderData.razorpay_payment_id || null,
+      items: orderData.items,
+      subtotal: orderData.subtotal,
+      tax: orderData.tax,
+      total: orderData.total,
+      customer_name: orderData.customer_name,
+      customer_phone: orderData.customer_phone,
+      customer_email: orderData.customer_email || null,
+      customer_address: orderData.customer_address || null,
+      customer_latitude: orderData.customer_latitude ?? null,
+      customer_longitude: orderData.customer_longitude ?? null,
+      delivery_distance_km: orderData.delivery_distance_km ?? null,
+      delivery_rush_hour: orderData.delivery_rush_hour ?? false,
+      customer_tip: orderData.customer_tip ?? 0,
+      customer_account_id: orderData.customer_account_id ?? null,
+      payment_method: orderData.payment_method,
+      source: orderData.source || 'pos',
+      status: orderData.status || 'pending',
+      order_type: orderData.order_type || 'customer',
+      table_number: tableNumber,
+      tab_number: tabNumber,
+      estimated_delivery_time: orderData.estimated_delivery_time || null,
+      discount_amount: orderData.discount_amount || 0,
+      promo_code: orderData.promo_code || null,
+      loyalty_points_redeemed: orderData.loyalty_points_redeemed || 0,
+      loyalty_points_earned: orderData.loyalty_points_earned || 0,
+    };
+
+    if (orderData.source_channel === 'qr') {
+      orderInsert.source_channel = 'qr';
+    }
+
+    let { data, error } = await supabase
       .from('orders')
-      .insert({
-        restaurant_id: orderData.restaurant_id,
-        razorpay_order_id: orderData.razorpay_order_id || null,
-        razorpay_payment_id: orderData.razorpay_payment_id || null,
-        items: orderData.items,
-        subtotal: orderData.subtotal,
-        tax: orderData.tax,
-        total: orderData.total,
-        customer_name: orderData.customer_name,
-        customer_phone: orderData.customer_phone,
-        customer_email: orderData.customer_email || null,
-        customer_address: orderData.customer_address || null,
-        customer_latitude: orderData.customer_latitude ?? null,
-        customer_longitude: orderData.customer_longitude ?? null,
-        delivery_distance_km: orderData.delivery_distance_km ?? null,
-        delivery_rush_hour: orderData.delivery_rush_hour ?? false,
-        customer_tip: orderData.customer_tip ?? 0,
-        customer_account_id: orderData.customer_account_id ?? null,
-        payment_method: orderData.payment_method,
-        source: orderData.source || 'pos',
-        status: orderData.status || 'pending',
-        order_type: orderData.order_type || 'customer',
-        table_number: tableNumber,
-        tab_number: tabNumber,
-        estimated_delivery_time: orderData.estimated_delivery_time || null,
-        discount_amount: orderData.discount_amount || 0,
-        promo_code: orderData.promo_code || null,
-        loyalty_points_redeemed: orderData.loyalty_points_redeemed || 0,
-        loyalty_points_earned: orderData.loyalty_points_earned || 0,
-      })
+      .insert(orderInsert)
       .select()
       .single();
+
+    if (error && orderInsert.source_channel && error.message?.includes('source_channel')) {
+      const fallbackInsert = { ...orderInsert };
+      delete fallbackInsert.source_channel;
+      ({ data, error } = await supabase
+        .from('orders')
+        .insert(fallbackInsert)
+        .select()
+        .single());
+    }
 
     if (error) {
       console.error('Error creating order:', error);

@@ -981,6 +981,7 @@ export default function CustomerMode({
   customerMode,
   showCustomerBranding,
   acceptingOrders = true,
+  orderSource = 'web',
 }: {
   onBack: () => void;
   restaurantProp?: {
@@ -999,6 +1000,7 @@ export default function CustomerMode({
   customerMode?: boolean;
   showCustomerBranding?: boolean;
   acceptingOrders?: boolean;
+  orderSource?: 'qr' | 'web';
 }) {
   const isOrderingOpen = acceptingOrders && restaurantProp?.accepting_orders !== false;
   const [selectedCategory, setSelectedCategory] = useState("All");
@@ -1544,6 +1546,7 @@ export default function CustomerMode({
           delivery_rush_hour: deliveryRushHour,
           customer_tip: tipAmountFinal,
           source: (customerMode ? "customer" : "pos") as "customer" | "pos",
+          source_channel: (orderSource === "qr" ? "qr" : "direct") as "qr" | "direct",
           customer_account_id:
             customerMode && customerAccount ? customerAccount.id : null,
           payment_method: paymentData.method,

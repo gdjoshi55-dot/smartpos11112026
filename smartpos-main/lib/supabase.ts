@@ -317,6 +317,7 @@ export type Database = {
           delivery_rush_hour: boolean;
           customer_tip: number;
           source: string;
+          source_channel: string;
           customer_account_id: number | null;
         };
         Insert: {
@@ -354,6 +355,7 @@ export type Database = {
           delivery_rush_hour?: boolean;
           customer_tip?: number;
           source?: string;
+          source_channel?: string;
         };
         Update: {
           status?: string;
@@ -377,6 +379,7 @@ export type Database = {
           delivery_rush_hour?: boolean;
           customer_tip?: number;
           source?: string;
+          source_channel?: string;
           customer_account_id?: number | null;
         };
       };
