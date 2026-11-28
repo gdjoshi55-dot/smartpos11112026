@@ -295,6 +295,7 @@ export type Database = {
           customer_address: string | null;
           payment_method: string;
           status: string;
+          prepared_at: string | null;
           order_type: string;
           estimated_delivery_time: number | null;
           table_number: number | null;
@@ -335,6 +336,7 @@ export type Database = {
           customer_account_id?: number | null;
           payment_method?: string;
           status?: string;
+          prepared_at?: string | null;
           order_type?: string;
           estimated_delivery_time?: number | null;
           table_number?: number | null;
@@ -359,6 +361,7 @@ export type Database = {
         };
         Update: {
           status?: string;
+          prepared_at?: string | null;
           payment_method?: string;
           table_number?: number | null;
           tab_number?: number | null;

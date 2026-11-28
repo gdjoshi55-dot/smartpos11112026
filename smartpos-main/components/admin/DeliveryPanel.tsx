@@ -41,6 +41,7 @@ interface AdminDeliveryOrder {
   total: number;
   payment_method: string | null;
   status: string | null;
+  prepared_at: string | null;
   order_type: string | null;
   delivery_status: string | null;
   delivery_partner: string | null;
@@ -382,6 +383,15 @@ export default function DeliveryPanel() {
                         )}`}
                       >
                         {order.status || 'pending'}
+                      </span>
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                          order.prepared_at
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {order.prepared_at ? 'Kitchen ready' : 'Not prepared yet'}
                       </span>
                       {order.delivery_awb && (
                         <span className="inline-flex rounded-full bg-indigo-100 px-2.5 py-0.5 text-xs font-medium text-indigo-800">

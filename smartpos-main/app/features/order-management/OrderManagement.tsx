@@ -189,8 +189,11 @@ export default function OrderManagement({
   const currency = restaurant.currency || 'INR';
   // Paid customer/POS orders are stored as "settled" but still need to be
   // prepared. Show them in the restaurant's order-status workflow as pending.
-  const effectiveStatus = (status?: string | null) =>
-    status === 'settled' ? 'pending' : status || 'pending';
+  const effectiveStatus = (order: Pick<Order, 'status' | 'prepared_at'>) => {
+    if (order.prepared_at) return 'completed';
+    const status = order.status === 'settled' ? 'pending' : order.status || 'pending';
+    return status === 'delivered' ? 'completed' : status;
+  };
   const [orders, setOrders] = useState<Order[]>([]);
   const [assignments, setAssignments] = useState<Record<number, Assignment>>({});
   const [riders, setRiders] = useState<RiderOption[]>([]);
@@ -272,17 +275,19 @@ export default function OrderManagement({
   const updateOrderStatus = async (orderId: number, newStatus: string) => {
     try {
       setUpdatingOrderId(orderId);
+      const iso = new Date().toISOString();
+      const patch: Record<string, unknown> = {
+        status: newStatus,
+        updated_at: iso,
+      };
+      if (newStatus === "completed") patch.prepared_at = iso;
+
       const { error } = await supabase
         .from("orders")
-        .update({
-          status: newStatus,
-          updated_at: new Date().toISOString()
-        })
+        .update(patch)
         .eq("id", orderId);
 
       if (error) throw error;
-
-      const iso = new Date().toISOString();
       const targetOrder = orders.find((order) => order.id === orderId);
       const deliveryClosed =
         targetOrder?.order_type === "delivery" &&
@@ -293,6 +298,8 @@ export default function OrderManagement({
           ? {
               ...order,
               status: newStatus as any,
+              prepared_at:
+                newStatus === "completed" ? iso : order.prepared_at,
               delivery_status: deliveryClosed
                 ? newStatus === "completed"
                   ? "delivered"
@@ -368,7 +375,7 @@ export default function OrderManagement({
 
   const filteredOrders = orders.filter(order => {
     if (statusFilter === "all") return true;
-    return effectiveStatus(order.status) === statusFilter;
+    return effectiveStatus(order) === statusFilter;
   });
 
   if (loading) {
@@ -425,7 +432,7 @@ export default function OrderManagement({
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Pending Orders</p>
               <p className="text-2xl font-bold text-gray-900">
-                {orders.filter(order => effectiveStatus(order.status) === 'pending').length}
+                {orders.filter(order => effectiveStatus(order) === 'pending').length}
               </p>
             </div>
           </div>
@@ -470,9 +477,9 @@ export default function OrderManagement({
                       <h4 className="text-lg font-medium text-gray-900">
                         Order #{order.id}
                       </h4>
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(effectiveStatus(order.status))}`}>
-                        {getStatusIcon(effectiveStatus(order.status))}
-                        {effectiveStatus(order.status).charAt(0).toUpperCase() + effectiveStatus(order.status).slice(1).replace('_', ' ')}
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(effectiveStatus(order))}`}>
+                        {getStatusIcon(effectiveStatus(order))}
+                        {effectiveStatus(order).charAt(0).toUpperCase() + effectiveStatus(order).slice(1).replace('_', ' ')}
                       </span>
                       {order.status === 'settled' && (
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-emerald-100 text-xs font-medium text-emerald-700">
@@ -668,7 +675,7 @@ export default function OrderManagement({
                           </button>
                         )}
                         */}
-                        {effectiveStatus(order.status) === 'pending' && (
+                        {effectiveStatus(order) === 'pending' && (
                           <button
                             onClick={() => updateOrderStatus(order.id, 'in_progress')}
                             disabled={updatingOrderId === order.id}
@@ -678,7 +685,7 @@ export default function OrderManagement({
                             Start Preparing
                           </button>
                         )}
-                        {effectiveStatus(order.status) === 'in_progress' && (
+                        {effectiveStatus(order) === 'in_progress' && (
                           <button
                             onClick={() => updateOrderStatus(order.id, 'completed')}
                             disabled={updatingOrderId === order.id}
@@ -688,7 +695,7 @@ export default function OrderManagement({
                             Mark Complete
                           </button>
                         )}
-                        {['pending', 'in_progress'].includes(effectiveStatus(order.status)) && (
+                        {['pending', 'in_progress'].includes(effectiveStatus(order)) && (
                           <button
                             onClick={() => updateOrderStatus(order.id, 'cancelled')}
                             disabled={updatingOrderId === order.id}

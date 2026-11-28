@@ -406,6 +406,14 @@ export default function RiderMode({ onBack }: RiderModeProps) {
 
   const updateDelivery = async (order: Order, next: AssignmentStatus) => {
     if (!user?.id) return;
+    if (next === "picked_up" && !order.prepared_at) {
+      toast.error("Wait for the kitchen to mark this order as prepared first.");
+      return;
+    }
+    if (next === "delivered" && assignmentStatus(order) !== "picked_up") {
+      toast.error("Mark the order as picked up before delivering it.");
+      return;
+    }
     const iso = new Date().toISOString();
     const assignmentPatch: Record<string, unknown> = {
       status: next,
@@ -419,13 +427,9 @@ export default function RiderMode({ onBack }: RiderModeProps) {
     } else if (next === "picked_up") {
       assignmentPatch.picked_up_at = iso;
       orderPatch.delivery_status = "out_for_delivery";
-      if (!order.status || order.status === "pending") {
-        orderPatch.status = "in_progress";
-      }
     } else if (next === "delivered") {
       assignmentPatch.delivered_at = iso;
       orderPatch.delivery_status = "delivered";
-      orderPatch.status = "completed";
     } else if (next === "cancelled") {
       assignmentPatch.cancelled_at = iso;
       orderPatch.delivery_status = "cancelled";
@@ -436,14 +440,16 @@ export default function RiderMode({ onBack }: RiderModeProps) {
       const { error: assignmentError } = await supabase
         .from("delivery_assignments")
         .update(assignmentPatch)
-        .eq("order_id", order.id);
+        .eq("order_id", order.id)
+        .eq("rider_id", user.id);
       if (assignmentError) throw assignmentError;
 
       if (Object.keys(orderPatch).length > 0) {
         const { error: orderError } = await supabase
           .from("orders")
           .update(orderPatch)
-          .eq("id", order.id);
+          .eq("id", order.id)
+          .eq("delivery_rider_id", user.id);
         if (orderError) throw orderError;
       }
 
@@ -722,6 +728,7 @@ export default function RiderMode({ onBack }: RiderModeProps) {
           <div className="space-y-4">
             {shownOrders.map((order) => {
               const status = assignmentStatus(order);
+              const kitchenReady = !!order.prepared_at;
               const isUpdating = updatingOrderId === order.id;
               const orderCurrency =
                 restaurantCurrencies[order.restaurant_id] || currency;
@@ -784,6 +791,17 @@ export default function RiderMode({ onBack }: RiderModeProps) {
                       >
                         {statusLabel(status)}
                       </span>
+                      {status === "accepted" && (
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${
+                            kitchenReady
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {kitchenReady ? "Ready for pickup" : "Waiting for kitchen"}
+                        </span>
+                      )}
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-800">
                         {order.payment_method === "cash" ? "COD" : "Prepaid"}
                       </span>
@@ -918,12 +936,22 @@ export default function RiderMode({ onBack }: RiderModeProps) {
                         {status === "accepted" && (
                           <button
                             onClick={() => updateDelivery(order, "picked_up")}
-                            disabled={isUpdating}
+                            disabled={isUpdating || !kitchenReady}
+                            title={
+                              kitchenReady
+                                ? undefined
+                                : "Kitchen has not marked this order as prepared yet"
+                            }
                             className="flex-1 bg-indigo-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center"
                           >
                             <Package className="w-4 h-4 mr-1.5" />
                             Picked Up
                           </button>
+                        )}
+                        {status === "accepted" && !kitchenReady && (
+                          <p className="w-full text-xs text-amber-700">
+                            Kitchen has not marked this order as prepared yet.
+                          </p>
                         )}
                         {status === "picked_up" && (
                           <button

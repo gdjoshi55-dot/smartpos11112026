@@ -36,6 +36,7 @@ interface CustomerOrder {
   total: number;
   payment_method: string;
   status: string;
+  prepared_at: string | null;
   order_type: string;
   delivery_status: string | null;
   assignment_status: string | null;
@@ -58,11 +59,15 @@ function isActiveOrder(order: CustomerOrder) {
   if (order.assignment_status) {
     return !['delivered', 'cancelled'].includes(order.assignment_status);
   }
+  if (order.prepared_at) return true;
   return ACTIVE_STATUSES.includes(order.status);
 }
 
 function statusBadge(order: CustomerOrder) {
-  const status = order.assignment_status || order.delivery_status || order.status;
+  const status =
+    !order.assignment_status && !order.delivery_status && order.prepared_at
+      ? 'ready_for_pickup'
+      : order.assignment_status || order.delivery_status || order.status;
   switch (status) {
     case 'delivered':
     case 'completed':
@@ -77,6 +82,8 @@ function statusBadge(order: CustomerOrder) {
       return { label: 'Rider assigned', className: 'bg-blue-100 text-blue-800' };
     case 'in_progress':
       return { label: 'Preparing', className: 'bg-amber-100 text-amber-800' };
+    case 'ready_for_pickup':
+      return { label: 'Ready for pickup', className: 'bg-emerald-100 text-emerald-800' };
     case 'settled':
     case 'pending':
       return { label: 'Order placed', className: 'bg-gray-100 text-gray-700' };

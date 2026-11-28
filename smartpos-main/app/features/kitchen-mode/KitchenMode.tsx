@@ -17,6 +17,8 @@ import {
   MapPin,
   Flame,
   RotateCcw,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -34,36 +36,10 @@ type OrderStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
 const ACTIVE_STATUSES = ["pending", "in_progress", "settled"];
 
-// A "settled" order means it has been PAID but still needs preparing in the
-// kitchen. Map it to "pending" for kitchen display/status purposes so paid
-// orders reach the kitchen display instead of disappearing.
-const kitchenPrepStatus = (status: string | null | undefined) =>
-  status === "settled" ? "pending" : (status || "pending");
-
-const playChime = () => {
-  try {
-    const Ctx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext })
-        .webkitAudioContext;
-    const ctx = new Ctx();
-    const now = ctx.currentTime;
-    [880, 1174.66].forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = freq;
-      osc.type = "sine";
-      gain.gain.setValueAtTime(0.0001, now + i * 0.18);
-      gain.gain.exponentialRampToValueAtTime(0.25, now + i * 0.18 + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.18 + 0.25);
-      osc.start(now + i * 0.18);
-      osc.stop(now + i * 0.18 + 0.3);
-    });
-  } catch {
-    // Audio not available
-  }
+const kitchenPrepStatus = (order: Pick<Order, "status" | "prepared_at">) => {
+  if (order.prepared_at) return "completed";
+  const status = order.status === "settled" ? "pending" : order.status || "pending";
+  return status === "delivered" ? "completed" : status;
 };
 
 export default function KitchenMode({ onBack }: KitchenModeProps) {
@@ -74,8 +50,82 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
   const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const seenOrderIds = useRef<Set<number>>(new Set());
+  const hasLoadedOrders = useRef(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const restaurantName = restaurant?.restaurant_name || "Kitchen Mode";
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("kitchen_sound_enabled");
+      if (stored != null) setSoundEnabled(stored === "true");
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("kitchen_sound_enabled", String(soundEnabled));
+    } catch {}
+  }, [soundEnabled]);
+
+  const ensureAudioContext = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Ctx) return null;
+    if (!audioCtxRef.current) audioCtxRef.current = new Ctx();
+    const ctx = audioCtxRef.current;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    return ctx;
+  }, []);
+
+  const playOrderBeep = useCallback(
+    (force = false) => {
+      if (!soundEnabled && !force) return;
+      const ctx = ensureAudioContext();
+      if (!ctx) return;
+      try {
+        const startAt = ctx.currentTime + 0.02;
+        [0, 0.3, 0.6].forEach((offset) => {
+          const start = startAt + offset;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(1046.5, start);
+          gain.gain.setValueAtTime(0.0001, start);
+          gain.gain.exponentialRampToValueAtTime(0.4, start + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.22);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(start);
+          osc.stop(start + 0.25);
+        });
+      } catch (err) {
+        console.error("Could not play kitchen beep:", err);
+      }
+    },
+    [ensureAudioContext, soundEnabled]
+  );
+
+  useEffect(() => {
+    const prime = () => {
+      ensureAudioContext();
+      window.removeEventListener("pointerdown", prime);
+      window.removeEventListener("keydown", prime);
+      window.removeEventListener("touchstart", prime);
+    };
+    window.addEventListener("pointerdown", prime);
+    window.addEventListener("keydown", prime);
+    window.addEventListener("touchstart", prime);
+    return () => {
+      window.removeEventListener("pointerdown", prime);
+      window.removeEventListener("keydown", prime);
+      window.removeEventListener("touchstart", prime);
+    };
+  }, [ensureAudioContext]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30000);
@@ -95,6 +145,8 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
       if (error) throw error;
 
       const previousIds = seenOrderIds.current;
+      const firstLoad = !hasLoadedOrders.current;
+      hasLoadedOrders.current = true;
       seenOrderIds.current = new Set((data || []).map((o) => o.id));
 
       setOrders(data || []);
@@ -104,8 +156,8 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
           !previousIds.has(o.id) &&
           ACTIVE_STATUSES.includes(o.status || "pending")
       );
-      if (previousIds.size > 0 && newActive.length > 0) {
-        playChime();
+      if (!firstLoad && newActive.length > 0) {
+        playOrderBeep();
         toast.success(
           `${newActive.length} new order${newActive.length > 1 ? "s" : ""} received!`
         );
@@ -116,7 +168,7 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
     } finally {
       setLoading(false);
     }
-  }, [restaurant?.restaurant_id]);
+  }, [restaurant?.restaurant_id, playOrderBeep]);
 
   useEffect(() => {
     fetchOrders();
@@ -127,9 +179,16 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
   const updateOrderStatus = async (orderId: number, newStatus: OrderStatus) => {
     try {
       setUpdatingOrderId(orderId);
+      const iso = new Date().toISOString();
+      const patch: Record<string, unknown> = {
+        status: newStatus,
+        updated_at: iso,
+      };
+      if (newStatus === "completed") patch.prepared_at = iso;
+
       const { error } = await supabase
         .from("orders")
-        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .update(patch)
         .eq("id", orderId);
 
       if (error) throw error;
@@ -137,7 +196,12 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
       setOrders((prev) =>
         prev.map((order) =>
           order.id === orderId
-            ? { ...order, status: newStatus, updated_at: new Date().toISOString() }
+            ? {
+                ...order,
+                status: newStatus,
+                prepared_at: newStatus === "completed" ? iso : order.prepared_at,
+                updated_at: iso,
+              }
             : order
         )
       );
@@ -180,17 +244,17 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
 
   const stats = useMemo(
     () => ({
-      pending: orders.filter((o) => kitchenPrepStatus(o.status) === "pending").length,
-      inProgress: orders.filter((o) => kitchenPrepStatus(o.status) === "in_progress").length,
-      completed: orders.filter((o) => kitchenPrepStatus(o.status) === "completed").length,
-      cancelled: orders.filter((o) => kitchenPrepStatus(o.status) === "cancelled").length,
+      pending: orders.filter((o) => kitchenPrepStatus(o) === "pending").length,
+      inProgress: orders.filter((o) => kitchenPrepStatus(o) === "in_progress").length,
+      completed: orders.filter((o) => kitchenPrepStatus(o) === "completed").length,
+      cancelled: orders.filter((o) => kitchenPrepStatus(o) === "cancelled").length,
     }),
     [orders]
   );
 
   const filteredOrders = useMemo(() => {
     const status = statusFilter;
-    const filtered = orders.filter((o) => kitchenPrepStatus(o.status) === status);
+    const filtered = orders.filter((o) => kitchenPrepStatus(o) === status);
     if (status === "pending" || status === "in_progress") {
       return [...filtered].sort(
         (a, b) =>
@@ -241,6 +305,20 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
           <span className="hidden sm:inline text-xs text-blue-100">
             Refreshes every 15s
           </span>
+          <button
+            onClick={() => {
+              if (!soundEnabled) playOrderBeep(true);
+              setSoundEnabled((enabled) => !enabled);
+            }}
+            className="p-2 hover:bg-blue-700 rounded-lg transition-colors flex items-center"
+            title={soundEnabled ? "Mute new order beep" : "Enable new order beep"}
+          >
+            {soundEnabled ? (
+              <Volume2 className="w-5 h-5" />
+            ) : (
+              <VolumeX className="w-5 h-5" />
+            )}
+          </button>
           <button
             onClick={fetchOrders}
             className="p-2 hover:bg-blue-700 rounded-lg transition-colors flex items-center"
@@ -304,7 +382,7 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
             {filteredOrders.map((order) => {
               const status = order.status || "pending";
-              const prepStatus = kitchenPrepStatus(status);
+              const prepStatus = kitchenPrepStatus(order);
               const isActive = ACTIVE_STATUSES.includes(status);
               return (
                 <div
@@ -333,9 +411,16 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
                           Take Away
                         </span>
                       ) : order.order_type === "delivery" ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800">
-                          Delivery
-                        </span>
+                        <>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800">
+                            Delivery
+                          </span>
+                          {prepStatus === "completed" && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+                              Ready for pickup
+                            </span>
+                          )}
+                        </>
                       ) : order.table_number != null && order.tab_number != null ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800">
                           T{order.table_number}-{order.tab_number}
@@ -494,7 +579,7 @@ export default function KitchenMode({ onBack }: KitchenModeProps) {
                           </button>
                         </>
                       )}
-                      {(status === "completed" || status === "cancelled") && (
+                      {(status === "completed" || status === "cancelled") && !order.prepared_at && (
                         <button
                           onClick={() => updateOrderStatus(order.id, "pending")}
                           disabled={updatingOrderId === order.id}
